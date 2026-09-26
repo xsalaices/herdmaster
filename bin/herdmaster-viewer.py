@@ -14,103 +14,53 @@ PAGE = r"""<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Herdmaster board</title>
 <style>
-:root{--bg:#f6f5f2;--card:#fff;--ink:#1c1b19;--mute:#6f6c66;--line:#e4e1da;--accent:#2d5be3;--accent-bg:#e9eefc;--ok:#1f7a4d;--ok-bg:#e3f4ea;--warn:#b25e09;--warn-bg:#fdf0dc;--bad:#b3261e;--bad-bg:#fbe7e5}
-@media (prefers-color-scheme:dark){:root{--bg:#141413;--card:#1d1d1b;--ink:#ecebe7;--mute:#948f86;--line:#2e2d2a;--accent:#8fa8ff;--accent-bg:#20263f;--ok:#63cf98;--ok-bg:#16291f;--warn:#e8a558;--warn-bg:#2d2213;--bad:#f28b82;--bad-bg:#301a18}}
+:root{--bg:#f6f5f2;--card:#fff;--ink:#1c1b19;--mute:#6f6c66;--line:#e4e1da;--review:#2d5be3;--work:#8a867d;--ready:#1f7a4d;--fail:#b3261e;--ask:#b25e09}
+@media (prefers-color-scheme:dark){:root{--bg:#141413;--card:#1d1d1b;--ink:#ecebe7;--mute:#948f86;--line:#2e2d2a;--review:#8fa8ff;--work:#948f86;--ready:#63cf98;--fail:#f28b82;--ask:#e8a558}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:760px;margin:0 auto;padding:20px 16px 48px}
-header{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin-bottom:24px}
-h1{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);margin:0;font-weight:600}
-#count{font-size:20px;font-weight:600;flex-basis:100%;order:2}
-#note{font-size:13px;color:var(--mute);order:3;flex-basis:100%}
-#note.err{color:var(--bad)}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1000px;margin:0 auto;padding:24px 16px 48px}
+#board{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start}
+@media (max-width:640px){#board{grid-template-columns:1fr}}
 section{margin-bottom:28px}
-h2{display:flex;align-items:center;gap:8px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:0 0 8px;font-weight:600}
-h2 .n{background:var(--line);color:var(--ink);border-radius:9px;padding:0 7px;font-size:12px}
-section.hot h2{font-size:14px;color:var(--ink)}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:8px}
-.hot .card{border-left:4px solid var(--accent);padding:14px 16px}
-.hot.ready .card{border-left-color:var(--ok)}
-.decisions .card{border-left:4px solid var(--warn)}
-.top{display:flex;gap:10px;align-items:baseline}
-.id{font:12px ui-monospace,Menlo,monospace;color:var(--mute);flex:none}
-.title{font-weight:600;flex:1;overflow-wrap:anywhere}
-.hot .title{font-size:17px}
-.meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;font-size:12px;color:var(--mute)}
-.tag{border-radius:4px;padding:1px 7px;background:var(--line);color:var(--ink)}
-.tag.user{background:var(--accent-bg);color:var(--accent)}
-.tag.flag{background:var(--bad-bg);color:var(--bad);font-weight:600}
-.tag.ok{background:var(--ok-bg);color:var(--ok)}
-details{margin-top:8px;font-size:13px}
-summary{cursor:pointer;color:var(--mute)}
-ol{margin:6px 0 0;padding-left:20px}
-li{margin:3px 0}
-li .fb{color:var(--mute)}
-.quiet .card{padding:8px 12px}
-.empty{color:var(--mute);text-align:center;padding:48px 0}
-.fold>summary{font-size:12px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;margin-bottom:8px}
+h2{display:flex;align-items:center;gap:8px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;margin:0 0 8px;font-weight:700;color:var(--mute)}
+h2 .n{font-weight:600}
+.row{display:flex;align-items:baseline;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin-bottom:6px}
+.row .t{flex:1;overflow-wrap:anywhere}
+.tag{flex:none;font:600 13px ui-monospace,Menlo,monospace;color:var(--mute);min-width:2.2em}
+.pill{flex:none;font-size:12px;font-weight:600;border-radius:999px;padding:2px 10px;color:var(--c);border:1px solid var(--c)}
+.row{flex-wrap:wrap}
+.note{flex-basis:100%;color:var(--mute);font-size:14px}
+.rec{flex-basis:100%;font-size:14px;color:var(--ask)}
+.warn{color:var(--fail);font-size:13px;margin-left:8px}
+.ask{--c:var(--ask)}.review{--c:var(--review)}.working{--c:var(--work)}.ready{--c:var(--ready)}.failed{--c:var(--fail)}
+.empty{color:var(--mute);padding:12px 2px}
+#note{font-size:13px;color:var(--fail);margin-bottom:16px}
 </style></head><body><main>
-<header><h1>Herdmaster board <span id="proj"></span></h1><div id="count">Loading</div><div id="note"></div></header>
+<div id="note"></div>
 <div id="board"></div>
 </main>
 <script>
 const $=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
-const age=s=>s<3600?Math.floor(s/60)+"m":s<172800?Math.floor(s/3600)+"h":Math.floor(s/86400)+"d";
-function countLine(es){
-  const rev=es.filter(e=>e.kind==="task"&&e.status==="in review");
-  const p=[];
-  if(rev.length){const t=Math.min(...rev.map(e=>Date.parse(e.updated)||Date.now()));p.push(rev.length+" in review (oldest "+age(Math.max(0,(Date.now()-t)/1000))+")")}
-  const dr=es.filter(e=>e.kind==="task"&&e.status==="deploy-ready").length;if(dr)p.push(dr+" deploy-ready");
-  const od=es.filter(e=>e.kind==="decision"&&e.status==="open").length;if(od)p.push(od+" decision open");
-  const fl=es.filter(e=>(e.flags||[]).length).length;if(fl)p.push(fl+" flagged");
-  return p.length?"Board: "+p.join(", "):"Board: nothing waiting on you";
+const STATUS={"in review":["review","In review"],"finished":["review","In review"],"working":["working","Working"],"blocked":["working","Working"],"approved":["working","Working"],"deploy-ready":["ready","Ready to deploy"],"failed":["failed","Failed"]};
+const ORDER=["review","failed","working","ready"];
+function row(e,cls,label){
+  const r=$("div","row "+cls);r.append($("span","tag",(e.id||"").replace(/-0*/,"")),$("span","t",e.title||"(untitled)"));
+  if((e.flags||[]).length)r.append($("span","warn","a decision changed"));
+  if(label)r.append($("span","pill",label));
+  if(e.note)r.append($("div","note",e.note));
+  if(e.recommend)r.append($("div","rec","Recommended: "+e.recommend));return r;
 }
-function card(e){
-  const c=$("div","card"),top=$("div","top");
-  top.append($("span","id",e.id||"?"),$("span","title",e.title||"(untitled)"));c.append(top);
-  const m=$("div","meta");
-  if(e.review==="user")m.append($("span","tag user","your review"));
-  (e.flags||[]).forEach(f=>m.append($("span","tag flag",f.startsWith("superseded:")?"superseded decision "+f.slice(11):f)));
-  if((e.depends_on||[]).length)m.append($("span","",""+"needs "+e.depends_on.join(", ")));
-  if(e.updated)m.append($("span","","updated "+e.updated.replace("T"," ").replace(/:\d\dZ$/,"Z")));
-  if(m.childNodes.length)c.append(m);
-  const at=e.attempts||[];
-  if(at.length){
-    const d=$("details"),s=$("summary","",at.length+(at.length>1?" attempts":" attempt")),ol=$("ol");
-    at.forEach(a=>{const li=$("li","",a.status||"?");
-      if(a.feedback)li.append($("span","fb"," — "+a.feedback));
-      if(a.link)li.append($("span","fb"," ("+a.link+")"));ol.append(li)});
-    d.append(s,ol);c.append(d);
-  }
-  return c;
-}
-function group(title,list,cls){
-  if(!list.length)return null;
-  const s=$("section",cls),h=$("h2","",title);h.append($("span","n",list.length));s.append(h);
-  list.forEach(e=>s.append(card(e)));return s;
-}
-function fold(title,list){
-  if(!list.length)return null;
-  const s=$("section","quiet"),d=$("details","fold"),sm=$("summary","",title+" ("+list.length+")");
-  d.append(sm);list.forEach(e=>d.append(card(e)));s.append(d);return s;
+function section(title,rows,none){
+  const s=$("section"),h=$("h2","",title);h.append($("span","n",rows.length));s.append(h);
+  if(!rows.length)s.append($("div","empty",none));
+  rows.forEach(r=>s.append(r));return s;
 }
 function render(b){
   const es=Array.isArray(b.entries)?b.entries:[];
-  const t=es.filter(e=>e.kind!=="decision"),d=es.filter(e=>e.kind==="decision"),st=(l,s)=>l.filter(e=>e.status===s);
-  const known=["in review","deploy-ready","working","finished","approved","blocked","failed"];
-  const root=$("div");
-  [group("In review",st(t,"in review"),"hot"),
-   group("Deploy-ready",st(t,"deploy-ready"),"hot ready"),
-   group("Open decisions",st(d,"open"),"decisions"),
-   group("Failed",st(t,"failed")),group("Blocked",st(t,"blocked")),
-   group("Working",st(t,"working")),group("Finished",st(t,"finished")),group("Approved",st(t,"approved")),
-   group("Other",t.filter(e=>!known.includes(e.status))),
-   fold("Settled decisions",st(d,"settled")),fold("Superseded decisions",st(d,"superseded")),
-   group("Other decisions",d.filter(e=>!["open","settled","superseded"].includes(e.status)))
-  ].forEach(x=>x&&root.append(x));
-  if(!root.childNodes.length)root.append($("div","empty","The board is empty."));
-  document.getElementById("board").replaceChildren(root);
-  document.getElementById("count").textContent=countLine(es);
+  const ds=es.filter(e=>e.kind==="decision"&&e.status==="open").map(e=>row(e,"ask","Needs you"));
+  const tasks=es.filter(e=>e.kind!=="decision").map(e=>{const [c,l]=STATUS[e.status]||["working","Working"];return [c,l,e]});
+  tasks.sort((x,y)=>ORDER.indexOf(x[0])-ORDER.indexOf(y[0]));
+  document.getElementById("board").replaceChildren(section("Decisions needed",ds,"Nothing needs you."),section("Tasks",tasks.map(([c,l,e])=>row(e,c,l)),"No tasks yet."));
 }
 let last="";
 async function tick(){
@@ -119,14 +69,12 @@ async function tick(){
     const r=await fetch("/tasks.json",{cache:"no-store"});
     const txt=await r.text();
     if(!r.ok){let m="Board unavailable";try{m=JSON.parse(txt).error||m}catch(_){}
-      note.textContent=m+". Retrying every 3s.";note.className="err";return}
-    let b;try{b=JSON.parse(txt)}catch(_){note.textContent="Board file is not valid JSON. Showing last good view.";note.className="err";return}
-    if(b.schema_version!==1){note.textContent="Unexpected schema_version "+b.schema_version+"; showing what can be read.";note.className="err"}
-    else{note.textContent="";note.className=""}
+      note.textContent=m;return}
+    let b;try{b=JSON.parse(txt)}catch(_){note.textContent="Board file is not valid JSON. Showing the last good view.";return}
+    note.textContent="";
     if(txt!==last){last=txt;render(b)}
-  }catch(_){note.textContent="Viewer server unreachable. Retrying every 3s.";note.className="err"}
+  }catch(_){note.textContent="Viewer server unreachable. Retrying."}
 }
-fetch("/project").then(r=>r.text()).then(t=>document.getElementById("proj").textContent="· "+t).catch(()=>{});
 tick();setInterval(tick,3000);
 </script></body></html>
 """

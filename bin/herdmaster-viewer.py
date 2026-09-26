@@ -45,9 +45,6 @@ h2 .n{font-weight:600}
 #tabs button:hover{color:var(--ink)}
 #tabs button[aria-selected=true]{color:var(--ink);font-weight:600;border-bottom-color:var(--ink)}
 .badge{font-size:11px;font-weight:700;line-height:1;border-radius:999px;padding:3px 7px;background:var(--ask);color:var(--bg)}
-.acts{flex-basis:100%;display:flex;flex-wrap:wrap;gap:6px}
-.acts button{font:12px ui-monospace,Menlo,monospace;color:var(--mute);background:none;border:1px solid var(--line);border-radius:6px;padding:2px 8px;cursor:pointer}
-.acts button:hover,.acts button:focus-visible{color:var(--ink);border-color:var(--mute)}
 button:focus-visible{outline:2px solid var(--review);outline-offset:1px}
 details{margin-top:4px}
 summary{cursor:pointer;list-style:none;font-size:13px;letter-spacing:.06em;text-transform:uppercase;font-weight:700;color:var(--mute);padding:6px 0}
@@ -69,8 +66,6 @@ h1{font-size:14px;font-weight:600;letter-spacing:.02em;margin:0;color:var(--mute
 .set>.k{flex:1;min-width:0}
 .set .v{font:13px ui-monospace,Menlo,monospace;overflow-wrap:anywhere;text-align:right}
 .set .v.none{color:var(--mute)}
-.set button{flex:none;font:12px ui-monospace,Menlo,monospace;color:var(--mute);background:none;border:1px solid var(--line);border-radius:6px;padding:2px 8px;cursor:pointer}
-.set button:hover{color:var(--ink);border-color:var(--mute)}
 .set select{font:inherit;font-size:14px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:4px 6px;max-width:55%}
 .hint{color:var(--mute);font-size:13px;margin:6px 0 0}
 </style></head><body><main>
@@ -96,47 +91,32 @@ try{const s=JSON.parse(localStorage.getItem("hm-prefs")||"{}");
 function setPref(k,v){prefs[k]=v;try{localStorage.setItem("hm-prefs",JSON.stringify(prefs))}catch(_){}applyTheme()}
 function applyTheme(){const r=document.documentElement;if(prefs.theme==="auto")r.removeAttribute("data-theme");else r.dataset.theme=prefs.theme}
 applyTheme();
-function copy(text,btn){
-  const done=()=>{const o=btn.textContent;btn.textContent="copied";setTimeout(()=>{btn.textContent=o},1000)};
-  const cmd=text+ctx.suffix;
-  if(navigator.clipboard)navigator.clipboard.writeText(cmd).then(done,()=>{});
-}
-function acts(cmds){
-  const d=$("div","acts");
-  cmds.forEach(c=>{const b=$("button","",c);b.type="button";b.title="Copy: "+c+ctx.suffix;b.onclick=()=>copy(c,b);d.append(b)});return d;
-}
-function row(e,cls,label,cmds,past){
+function row(e,cls,label,past){
   const r=$("div","row "+cls+(past?" past":""));r.append($("span","tag",short(e.id)),$("span","t",e.title||"(untitled)"));
   if((e.flags||[]).length)r.append($("span","warn","a decision changed"));
   if(label)r.append($("span","pill",label));
   if(e.note)r.append($("div","note",e.note));
   if(e.recommend)r.append($("div","rec","Recommended: "+e.recommend));
-  if(cmds&&cmds.length)r.append(acts(cmds));return r;
+  return r;
 }
 function section(title,rows,none){
   const s=$("section"),h=$("h2","",title);h.append($("span","n",rows.length));s.append(h);
   if(!rows.length)s.append($("div","empty",none));
   rows.forEach(r=>s.append(r));return s;
 }
-function taskCmds(c,e){
-  const i=short(e.id),w=ctx.word;
-  if(c==="working")return e.status==="paused"?["stop "+i]:["pause "+i,"stop "+i];
-  if(c==="ready")return [w+" "+i,w+" "+i+" when done"];
-  return [];
-}
 function render(b){
   const es=Array.isArray(b.entries)?b.entries:[];
-  const ds=es.filter(e=>e.kind==="decision"&&e.status==="open").map(e=>row(e,"ask","Needs you",["approve "+short(e.id),"reject "+short(e.id)]));
+  const ds=es.filter(e=>e.kind==="decision"&&e.status==="open").map(e=>row(e,"ask","Needs you"));
   const tasks=es.filter(e=>e.kind!=="decision"&&e.status!=="done"&&e.status!=="cancelled").map(e=>{const [c,l]=STATUS[e.status]||["working","Working"];return [c,l||"Ready to "+ctx.word,e]});
   tasks.sort((x,y)=>ORDER.indexOf(x[0])-ORDER.indexOf(y[0]));
-  document.getElementById("board").replaceChildren(section("Decisions needed",ds,"Nothing needs you."),section("Tasks",tasks.map(([c,l,e])=>row(e,c,l,taskCmds(c,e))),"No tasks yet."));
+  document.getElementById("board").replaceChildren(section("Decisions needed",ds,"Nothing needs you."),section("Tasks",tasks.map(([c,l,e])=>row(e,c,l)),"No tasks yet."));
   const past=es.filter(e=>e.kind!=="decision"&&(e.status==="done"||e.status==="cancelled"));
   const pe=document.getElementById("past");
   if(!past.length){pe.replaceChildren();return}
   past.sort((x,y)=>String(y.updated||"").localeCompare(String(x.updated||"")));
   const d=$("details"),s=$("summary","","Done");s.append(" ",$("span","n",past.length));d.append(s);d.open=pastOpen;
   d.ontoggle=()=>{pastOpen=d.open};
-  past.slice(0,showAll?past.length:prefs.done).forEach(e=>d.append(row(e,"working",e.status==="cancelled"?"cancelled":"done",null,true)));
+  past.slice(0,showAll?past.length:prefs.done).forEach(e=>d.append(row(e,"working",e.status==="cancelled"?"cancelled":"done",true)));
   if(past.length>prefs.done){const m=$("button","more",showAll?"show fewer":"show all "+past.length);m.type="button";m.onclick=()=>{showAll=!showAll;last="";tick()};d.append(m)}
   pe.replaceChildren(d);
 }
@@ -157,11 +137,10 @@ function renderPanel(){
   const sh=$("h3","","Project settings"+(ctx.suffix?" "+ctx.suffix.trim():""));
   const sr=KEYS.map(k=>{
     const v=ctx.settings[k],has=v!==undefined&&v!==null;
-    const b=$("button","","copy command");b.type="button";b.onclick=()=>copy("set "+k+" "+(has?v:"<value>"),b);
     const val=$("span","v"+(has?"":" none"),has?(typeof v==="object"?JSON.stringify(v):String(v)):"default");
-    const r=$("div","set");r.append($("span","k",k),val,b);return r;
+    const r=$("div","set");r.append($("span","k",k),val);return r;
   });
-  p.replaceChildren(pf,...rows,sh,...sr,$("p","hint","Read-only. Copy a command and give it to the planner."));
+  p.replaceChildren(pf,...rows,sh,...sr,$("p","hint","Read-only. Ask the planner to change these."));
 }
 function renderTabs(){
   const nav=document.getElementById("tabs");

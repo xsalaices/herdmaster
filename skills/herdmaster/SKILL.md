@@ -18,9 +18,9 @@ Model names below are variables: `$HERDMASTER_MODEL_DEFAULT` (routine), `$HERDMA
 
 0. If `HERDMASTER_ROLE` is set, this is a fleet pane, not a planner window: say so and stop. Otherwise check `command -v herdr jq python3` and that `~/.claude/herdmaster/bin/pressure-guard.sh` exists. If anything is missing, tell the user the requirements (macOS, Claude Code, herdr, jq, python3) and to run `scripts/install.sh` from the herdmaster repo, then stop.
 
-1. Write this session's name (from `ListAgents`) to `~/.claude/orchestrator/<project>/master`.
-2. Read `~/.claude/orchestrator/<project>/orchestrator` for the orchestrator's name and check it is live in `ListAgents`. If not, launch one in the right half of tab 1 (split this pane to the right):
-   `env -u ANTHROPIC_API_KEY HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=<this session's name> claude --model "$HERDMASTER_MODEL_DEFAULT" --dangerously-skip-permissions '/orchestrator <project>'`
+1. Write this session's name (from `ListAgents`) to `~/.claude/orchestrator/<project>/master`, and rename this pane: `herdr pane rename "$(herdr pane current | jq -r .result.pane.pane_id)" herdmaster`.
+2. Read `~/.claude/orchestrator/<project>/orchestrator` for the orchestrator's name and check it is live in `ListAgents`. If not, launch one in a new pane on the right half of tab 1, labeled `orchestrator` (sets `HERDMASTER_ROLE=orchestrator` and `HERDMASTER_MASTER` from the master file):
+   `$HERDMASTER_HOME/bin/herdmaster-layout.sh new-orchestrator env -u ANTHROPIC_API_KEY claude --model "$HERDMASTER_MODEL_DEFAULT" --dangerously-skip-permissions '/orchestrator <project>'`
    Then re-read the name file.
 3. Read the project CLAUDE.md and `status.md`, run `$HERDMASTER_HOME/bin/herdmaster-board.sh count`, then give the user a short status: live, in flight, waiting on them, waiting on others.
 4. Optionally arm a blocked-pane check in the background:

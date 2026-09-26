@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Places worker panes and keeps the grid even.
 # Usage: herdmaster-layout.sh [--dry-run] new-worker <label> <command...>   prints the new pane id
+#        herdmaster-layout.sh [--dry-run] new-orchestrator <command...>    splits the current pane right, labels it orchestrator, prints the new pane id
 #        herdmaster-layout.sh [--dry-run] rebalance [pane]                 equal widths for the tab of pane (default: current)
 # Env: HERDMASTER_WORKER_LAYOUT (tab|main, default tab), HERDMASTER_GRID_PANES (default 6),
 #      HERDMASTER_MAX_PANES (default 4, workers on the main tab when layout is main), HERDMASTER_PROJECT.
@@ -81,6 +82,15 @@ cmd_new_worker() {
   echo "$pane"
 }
 
+cmd_new_orchestrator() {
+  [[ $# -gt 0 ]] || die "new-orchestrator: <command...> required"
+  local pane master; master=$(master_name)
+  pane=$(mut_json .result.pane.pane_id "<new-pane>" pane split --current --direction right --no-focus)
+  mut pane rename "$pane" orchestrator >&2
+  mut pane run "$pane" "HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=$(printf '%q' "$master") $*" >&2
+  echo "$pane"
+}
+
 # Columns are the distinct x origins of the tab's panes. Each column boundary is a "right" split; --amount is a
 # delta on that split's ratio (resize grows the named pane toward --direction, so shrinking uses the pane on the far side), so one resize lands it on target (sweeps repeat because moving a parent split rescales its children).
 # Ceiling: only right-direction splits are balanced, rows in a column are left as split.
@@ -124,6 +134,7 @@ cmd_rebalance() {
 sub=${1:-}; shift || true
 case $sub in
   new-worker) cmd_new_worker "$@" ;;
+  new-orchestrator) cmd_new_orchestrator "$@" ;;
   rebalance) cmd_rebalance "$@" ;;
-  *) sed -n '2,7p' "$0"; exit 2 ;;
+  *) sed -n '2,8p' "$0"; exit 2 ;;
 esac

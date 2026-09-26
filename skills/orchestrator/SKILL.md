@@ -73,7 +73,7 @@ For `review:auto` work (and `review:user` work once approved), merge when the PR
 
 - One task per pane, each in its OWN fresh worktree named for the task. Never launch into an old or unrelated checkout. Remove the worktree after merge, only when `git status --porcelain --untracked-files=all` is empty.
 - Launch with an explicit model matched to the work: `$HERDMASTER_MODEL_DEFAULT` for routine, `$HERDMASTER_MODEL_DEEP` for hard debugging, design and audits, `$HERDMASTER_MODEL_LIGHT` for lookups.
-- Create worker panes with `$HERDMASTER_HOME/bin/herdmaster-layout.sh new-worker`, never by hand-splitting; it places them per the layout settings.
+- Create worker panes with `$HERDMASTER_HOME/bin/herdmaster-layout.sh new-worker "<task title>" <command...>`, never by hand-splitting; it places them per the layout settings. The pane label is the task title (short, no ids) and is also the board entry's `title`.
 - Every launched pane, workers included, gets `HERDMASTER_ROLE` (`worker`) and `HERDMASTER_MASTER=<master session name>` in its environment.
 - Launch panes in the same permission mode as yourself. Every fleet pane, the orchestrator included, launches with `--disallowedTools AskUserQuestion`. That flag is variadic: put it right after `claude` and follow it with another flag, never directly before the brief text.
   Shape: `env -u ANTHROPIC_API_KEY HERDMASTER_ROLE=worker HERDMASTER_MASTER=<master name> claude --disallowedTools AskUserQuestion --model "$MODEL" --dangerously-skip-permissions [--resume <id>] "<brief>"`.

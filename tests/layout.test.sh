@@ -48,6 +48,11 @@ has "$out" "pane split"
 out=$(HERDMASTER_WORKER_LAYOUT=main HERDMASTER_MAX_PANES=2 FAKE_MAIN_PANES=4 "$L" --dry-run new-worker build echo hi 2>&1)
 has "$out" "tab create"
 
+out=$("$L" --dry-run new-orchestrator claude hi 2>&1)
+has "$out" "pane split --current --direction right --no-focus"
+has "$out" "pane rename <new-pane> orchestrator"
+has "$out" "HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=planner-1 claude hi"
+
 out=$("$L" --dry-run rebalance 2>&1)
 has "$out" "pane resize --pane pane-b --direction left"
 echo ok

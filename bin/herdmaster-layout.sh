@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Places worker panes and keeps the grid even.
 # Usage: herdmaster-layout.sh [--dry-run] new-worker <label> <command...>   prints the new pane id
-#        herdmaster-layout.sh [--dry-run] rebalance                        equal widths for the current tab's grid
+#        herdmaster-layout.sh [--dry-run] rebalance [pane]                 equal widths for the tab of pane (default: current)
 # Env: HERDMASTER_WORKER_LAYOUT (tab|main, default tab), HERDMASTER_GRID_PANES (default 6),
-#      HERDMASTER_MAX_PANES (default 4, total panes on the main tab when layout is main), HERDMASTER_PROJECT.
+#      HERDMASTER_MAX_PANES (default 4, workers on the main tab when layout is main), HERDMASTER_PROJECT.
 # --dry-run prints the mutating herdr commands instead of running them; read-only queries still run.
 set -euo pipefail
 
@@ -17,6 +17,7 @@ DRY=0
 LAYOUT=${HERDMASTER_WORKER_LAYOUT:-tab}
 GRID=${HERDMASTER_GRID_PANES:-6}
 MAXP=${HERDMASTER_MAX_PANES:-4}
+FIXED_PANES=2 # planner and orchestrator share the main tab; everything else there is a worker
 [[ $LAYOUT == tab || $LAYOUT == main ]] || die "HERDMASTER_WORKER_LAYOUT must be tab or main"
 [[ $GRID =~ ^[1-9][0-9]*$ && $MAXP =~ ^[1-9][0-9]*$ ]] || die "pane limits must be positive integers"
 
@@ -54,7 +55,7 @@ cmd_new_worker() {
   local cur ws tab pane="" dir
   cur=$(current_pane_json); ws=$(jq -r .workspace_id <<<"$cur"); tab=$(jq -r .tab_id <<<"$cur")
 
-  if [[ $LAYOUT == main ]] && (( $(tab_panes "$tab" "$ws" | wc -l) < MAXP )); then
+  if [[ $LAYOUT == main ]] && (( $(tab_panes "$tab" "$ws" | wc -l) - FIXED_PANES < MAXP )); then
     read -r target dir < <(split_target "$tab" "$ws")
     pane=$(mut_json .result.pane.pane_id "<new-pane>" pane split "$target" --direction "$dir" --no-focus)
   else
@@ -80,40 +81,49 @@ cmd_new_worker() {
   echo "$pane"
 }
 
-# Columns are the distinct x origins of the tab's panes. The resize step size is not documented, so step
-# small, re-read the layout, and stop as soon as a boundary stops getting closer to its target.
+# Columns are the distinct x origins of the tab's panes. Each column boundary is a "right" split; --amount is a
+# delta on that split's ratio (resize grows the named pane toward --direction, so shrinking uses the pane on the far side), so one resize lands it on target (sweeps repeat because moving a parent split rescales its children).
+# Ceiling: only right-direction splits are balanced, rows in a column are left as split.
 cmd_rebalance() {
-  local anchor=${1:-} layout ncols step=0.05
-  if [[ -n $anchor ]]; then layout=$("$HERDR" pane layout --pane "$anchor" | jq -c .result.layout)
-  else layout=$("$HERDR" pane layout --current | jq -c .result.layout); fi
+  local anchor=${1:-} layout ncols i sweep moved
+  layout_of() { if [[ -n $anchor ]]; then "$HERDR" pane layout --pane "$anchor"; else "$HERDR" pane layout --current; fi | jq -c .result.layout; }
+  layout=$(layout_of)
   ncols=$(jq '[.panes[].rect.x] | unique | length' <<<"$layout")
   (( ncols > 1 )) || return 0
-  local i
-  for ((i = 0; i < ncols - 1; i++)); do
-    local prev=999999 tries=0
-    while (( tries++ < 12 )); do
-      local info delta pane dir
+  for ((sweep = 0; sweep < 8; sweep++)); do
+    moved=0
+    for ((i = 0; i < ncols - 1; i++)); do
+      local info amount pane
       info=$(jq -r --argjson i "$i" '
         .area.width as $w | ([.panes[].rect.x] | unique) as $xs
         | (($w * ($i + 1) / ($xs | length)) | round) as $want
-        | ($xs[$i + 1] - $want) as $have
-        | ([.panes[] | select(.rect.x == $xs[$i])] | min_by(.rect.y) | .pane_id) as $p
-        | "\(-$have) \($p)"' <<<"$layout")
-      delta=${info% *}; pane=${info#* }
-      local abs=${delta#-}
-      (( abs <= 1 || abs >= prev )) && break
-      prev=$abs
-      if (( delta > 0 )); then dir=right; else dir=left; fi
-      mut pane resize --pane "$pane" --direction "$dir" --amount "$step"
-      (( DRY )) && break
-      layout=$("$HERDR" pane layout --pane "$pane" | jq -c .result.layout)
+        | $xs[$i + 1] as $edge
+        | ([.splits[] | select(.direction == "right")]
+           | min_by((.rect.x + .ratio * .rect.width - $edge) | fabs)) as $s
+        | ((($want - $s.rect.x) / $s.rect.width) - $s.ratio) as $d
+        | (if $d > 0
+           then ([.panes[] | select(.rect.y == $s.rect.y and .rect.x >= $s.rect.x and .rect.x + .rect.width <= $edge)]
+                 | max_by(.rect.x + .rect.width) | .pane_id)
+           else ([.panes[] | select(.rect.y == $s.rect.y and .rect.x == $edge)] | first | .pane_id) end) as $p
+        | "\($d) \($p) \(($want - $edge) | fabs)"' <<<"$layout")
+      local d gap
+      read -r d pane gap <<<"$info"
+      (( $(awk -v g="$gap" 'BEGIN { print (g <= 1) }') )) && continue
+      amount=$(awk -v d="$d" 'BEGIN { printf "%.4f", (d < 0 ? -d : d) }')
+      if (( DRY )); then
+        echo "[dry-run] $HERDR pane resize --pane $pane --direction $(awk -v d="$d" 'BEGIN { print (d < 0 ? "left" : "right") }') --amount $amount"; return 0
+      fi
+      "$HERDR" pane resize --pane "$pane" --direction "$(awk -v d="$d" 'BEGIN { print (d < 0 ? "left" : "right") }')" --amount "$amount" >/dev/null
+      moved=1
+      layout=$(layout_of)
     done
+    (( moved )) || break
   done
 }
 
 sub=${1:-}; shift || true
 case $sub in
   new-worker) cmd_new_worker "$@" ;;
-  rebalance) cmd_rebalance ;;
+  rebalance) cmd_rebalance "$@" ;;
   *) sed -n '2,7p' "$0"; exit 2 ;;
 esac

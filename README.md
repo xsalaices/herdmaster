@@ -35,14 +35,21 @@ Parallel Claude Code windows turn into a full-time job: approving prompts, watch
 - **Orchestrator**: owns worker panes, PRs, merges and routine prompts. Logs to `~/.claude/orchestrator/<project>/status.md`.
 - **Workers**: one task per pane in its own worktree; message the orchestrator before going idle.
 
-Shared state lives in `~/.claude/orchestrator/<project>/` (`master`, `orchestrator`, `decisions.md`, `design-queue.md`, `status.md`). The `master` and `orchestrator` files hold each session's current name so messages never go to a dead session.
+Shared state lives in `~/.claude/orchestrator/<project>/` (`master`, `orchestrator`, `tasks.json`, `status.md`). The `master` and `orchestrator` files hold each session's current name so messages never go to a dead session.
 
 ## Escalation rules
 
 - Work signals (workers, CI, PRs, merges, load, stuck panes) go to the orchestrator.
 - The orchestrator escalates to the master only for: a decision, a surprise, a breakthrough, or deploy-ready. Everything else is batched into check-ins or logged in `status.md`.
 - Outside signals (email, people, money, security) go to the master only. Raw outside content is never forwarded to the orchestrator; the master sends clean tasks.
-- Non-blocking questions go to `design-queue.md`; only blocking ones are messaged.
+- Non-blocking questions become open decisions on the board; only blocking ones are messaged. Open decisions never disappear.
+- After each user message the master shows a one-line board count (only when something changed); results never interrupt a planning round.
+
+## Board and layout
+
+- **Board** (`tasks.json`): tasks and decisions with lifecycle, review mode (`review:user` for UI, website design and design decisions; `review:auto` for routine work and architecture), attempts and dependencies. The orchestrator is the only writer, through `bin/herdmaster-board.sh`; viewers are read-only. See [docs/design/board.md](docs/design/board.md).
+- **Layout** (`bin/herdmaster-layout.sh new-worker`): planner left and orchestrator right on tab 1, workers as an even grid on a workers tab. Tune with `HERDMASTER_GRID_PANES`, `HERDMASTER_WORKER_LAYOUT` and `HERDMASTER_MAX_PANES`.
+- **Pane identity**: launched panes get `HERDMASTER_ROLE` and `HERDMASTER_MASTER`; `/herdmaster` refuses to run in a fleet pane.
 
 ## Works well with wayfinder
 
@@ -57,6 +64,7 @@ Shared state lives in `~/.claude/orchestrator/<project>/` (`master`, `orchestrat
 | `launchd/cpu-reaper` | kills orphaned leftovers by exact process name only, reports CPU hogs |
 | `launchd/blocked-pane-watcher` | EXAMPLE: notifies when a herdr agent is blocked on a prompt |
 | `agents/*.md` | pinned-model subagents: lookup (Haiku), worker (Sonnet), deep (Opus) |
+| `bin/herdmaster-board.sh`, `bin/herdmaster-layout.sh` | board writer and worker-pane layout helpers used by the orchestrator |
 | `examples/worker-brief-template.md` | generic fleet rules for every worker brief |
 
 ## Model routing

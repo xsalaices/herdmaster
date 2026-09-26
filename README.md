@@ -64,7 +64,7 @@ scripts/install.sh               # install
 
 Then in Claude Code, inside your project's repo: `/master`. It starts (or finds) the orchestrator. See [docs/install.md](docs/install.md).
 
-Requirements: macOS, herdr, Claude Code, `jq`, `python3`.
+Requirements: macOS, [herdr](https://herdr.dev), Claude Code, `jq`, `python3`.
 
 ## herdr patterns used
 

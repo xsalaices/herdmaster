@@ -46,7 +46,7 @@ for f in "$REPO/hooks/pressure-check.sh" "$REPO/hooks/pressure-guard.sh" \
 done
 
 # 2. skills (never overwrite an existing skill unless --force)
-for s in master orchestrator; do
+for s in herdmaster orchestrator; do
   dest="$CLAUDE_DIR/skills/$s"
   if [[ -e $dest && $FORCE -eq 0 ]]; then
     say "skip skill $s: $dest exists (use --force to replace)"

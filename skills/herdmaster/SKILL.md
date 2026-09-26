@@ -1,6 +1,6 @@
 ---
-name: master
-description: Turn this session into the planner ("master") window for a project. The user talks plans and design decisions here; all execution is dispatched to a background orchestrator that runs workers in visible herdr panes. Use when the user says "start plan orchestration", "be the master/planner", or runs /master.
+name: herdmaster
+description: Turn this session into the planner ("master") window for a project. The user talks plans and design decisions here; all execution is dispatched to a background orchestrator that runs workers in visible herdr panes. Use when the user says "start plan orchestration", "be the master/planner", "start herdmaster", or runs /herdmaster.
 ---
 
 # Master (planner window)

@@ -44,7 +44,7 @@ if [[ -f $SETTINGS ]] && jq empty "$SETTINGS" 2>/dev/null; then
 fi
 
 if (( ! KEEP_SKILLS )); then
-  for s in master orchestrator; do
+  for s in herdmaster orchestrator; do
     [[ -f $CLAUDE_DIR/skills/$s/SKILL.md ]] && { run rm -f "$CLAUDE_DIR/skills/$s/SKILL.md"; run rmdir "$CLAUDE_DIR/skills/$s" 2>/dev/null || true; }
   done
 fi

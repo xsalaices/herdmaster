@@ -15,7 +15,7 @@ scripts/install.sh [--with-watcher] [--force]
 What it does, and only this:
 
 1. Copies helper scripts to `$HERDMASTER_HOME/bin` (default `~/.claude/herdmaster`; must live inside `~/.claude`).
-2. Copies the `master` and `orchestrator` skills to `~/.claude/skills/`. Existing skills are skipped unless `--force`.
+2. Copies the `herdmaster` (master window) and `orchestrator` skills to `~/.claude/skills/`. Existing skills are skipped unless `--force`.
 3. Copies the `lookup`, `worker` and `deep` subagents to `~/.claude/agents/`. Existing agents are skipped unless `--force`.
 4. Renders `com.herdmaster.*` LaunchAgent plists from `launchd/*/*.plist.tmpl` (placeholders `__HOME__` and `__HERDMASTER_HOME__` are substituted) into `~/Library/LaunchAgents` and loads them. `pressure-check` and `cpu-reaper` by default; the example blocked-pane watcher only with `--with-watcher`.
 5. Merges the PreToolUse hook into `~/.claude/settings.json` with `jq`. It backs the file up first (`settings.json.herdmaster-backup-<timestamp>`), appends to existing `hooks.PreToolUse` without removing anything, skips if already present (idempotent), and refuses if the file is not valid JSON.
@@ -33,7 +33,7 @@ What it does, and only this:
 
 ## 4. Use
 
-In your project's repo, run `/master`. Workers are briefed from `examples/worker-brief-template.md`.
+In your project's repo, run `/herdmaster`. Workers are briefed from `examples/worker-brief-template.md`.
 
 ## Uninstall
 

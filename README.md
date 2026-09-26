@@ -44,6 +44,10 @@ Shared state lives in `~/.claude/orchestrator/<project>/` (`master`, `orchestrat
 - Outside signals (email, people, money, security) go to the master only. Raw outside content is never forwarded to the orchestrator; the master sends clean tasks.
 - Non-blocking questions go to `design-queue.md`; only blocking ones are messaged.
 
+## Works well with wayfinder
+
+[wayfinder](https://github.com/mattpocock/skills/tree/main/skills/engineering/wayfinder) (from [mattpocock/skills](https://github.com/mattpocock/skills), MIT, not part of herdmaster) plans big work as a map of decision tickets and grills you through them. Run both side by side: resolve decisions with `/wayfinder`, and as each ticket closes, hand it to `/herdmaster` as a brief. The orchestrator builds it in a worker pane while you keep deciding the next one. Dispatch only closed tickets, and tell the orchestrator when a later decision supersedes work in flight.
+
 ## Guard rails
 
 | piece | what it does |
@@ -75,9 +79,9 @@ scripts/install.sh --dry-run     # preview
 scripts/install.sh               # install
 ```
 
-The install step is required: the `/master` and `/orchestrator` skills, subagents and guard hooks only exist after `scripts/install.sh` copies them into `~/.claude`. The installer checks the requirements below and tells you what is missing.
+The install step is required: the `/herdmaster` and `/orchestrator` skills, subagents and guard hooks only exist after `scripts/install.sh` copies them into `~/.claude`. The installer checks the requirements below and tells you what is missing.
 
-Then in Claude Code, inside your project's repo: `/master`. It starts (or finds) the orchestrator. See [docs/install.md](docs/install.md).
+Then in Claude Code, inside your project's repo: `/herdmaster`. It starts (or finds) the orchestrator. See [docs/install.md](docs/install.md).
 
 Requirements: macOS, [herdr](https://herdr.dev), Claude Code, `jq`, `python3`.
 

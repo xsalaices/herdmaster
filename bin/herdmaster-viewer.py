@@ -23,7 +23,7 @@ PAGE = r"""<!doctype html>
 :root[data-theme=dark]{color-scheme:dark;--bg:#141413;--card:#1d1d1b;--ink:#ecebe7;--mute:#948f86;--line:#2e2d2a;--review:#8fa8ff;--work:#948f86;--ready:#63cf98;--fail:#f28b82;--ask:#e8a558}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:1000px;margin:0 auto;padding:24px 16px 48px}
+main{max-width:1100px;margin:0 auto;padding:24px 16px 48px}
 #board{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start}
 @media (max-width:640px){#board{grid-template-columns:1fr}}
 section{margin-bottom:28px}
@@ -57,20 +57,37 @@ details[open] summary::before{transform:rotate(90deg)}
 #note{font-size:13px;color:var(--fail);margin-bottom:16px}
 header{display:flex;align-items:center;justify-content:space-between;margin:0 0 12px}
 h1{font-size:14px;font-weight:600;letter-spacing:.02em;margin:0;color:var(--mute)}
-#cog{display:flex;background:none;border:0;border-radius:6px;padding:6px;color:var(--mute);cursor:pointer}
-#cog:hover,#cog[aria-expanded=true]{color:var(--ink)}
-#cog svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
-#panel{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:4px 14px 10px;margin:0 0 20px}
-#panel h3{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:14px 0 6px;font-weight:700}
-.set{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:14px;min-height:36px}
-.set>.k{flex:1;min-width:0}
-.set .v{font:13px ui-monospace,Menlo,monospace;overflow-wrap:anywhere;text-align:right}
-.set .v.none{color:var(--mute)}
-.set select{font:inherit;font-size:14px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:4px 6px;max-width:55%}
-.hint{color:var(--mute);font-size:13px;margin:6px 0 0}
+.pop{position:relative}
+#cog{display:flex;background:none;border:0;border-radius:8px;padding:6px;color:var(--mute);cursor:pointer}
+#cog:hover,#cog[aria-expanded=true]{color:var(--ink);background:var(--line)}
+#cog:focus-visible{outline:2px solid var(--review);outline-offset:2px}
+#cog svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+#panel{position:absolute;right:0;top:calc(100% + 8px);z-index:10;width:min(320px,calc(100vw - 32px));background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:0 8px 28px rgba(0,0,0,.16),0 1px 3px rgba(0,0,0,.1)}
+#panel[hidden]{display:none}
+#panel .ttl{font-size:15px;font-weight:600;line-height:1.3}
+#panel .sub{font-size:13px;color:var(--mute);margin:2px 0 0}
+#panel h3{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:16px 0 4px;font-weight:600}
+#panel header+h3,#panel .hd+h3{margin-top:14px}
+.set{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 0;font-size:14px;min-height:34px}
+.set>.k{min-width:0}
+.set .v{font:12.5px ui-monospace,Menlo,monospace;overflow-wrap:anywhere;text-align:right}
+.set .v.none{color:var(--mute);font-family:inherit;font-size:13px}
+.kv .set{padding:4px 0;min-height:28px;border-bottom:1px solid var(--line)}
+.kv .set:last-child{border-bottom:0}
+.kv .k{color:var(--mute);font-size:13px}
+.seg{display:flex;flex:none;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:2px;gap:2px}
+.seg button{font:inherit;font-size:13px;color:var(--mute);background:none;border:0;border-radius:6px;padding:3px 10px;cursor:pointer}
+.seg button:hover{color:var(--ink)}
+.seg button[aria-checked=true]{background:var(--card);color:var(--ink);font-weight:600;box-shadow:0 0 0 1px var(--line)}
+.sel{position:relative;flex:none;min-width:0;max-width:60%}
+.sel::after{content:"";position:absolute;right:10px;top:50%;width:6px;height:6px;border:solid var(--mute);border-width:0 1.5px 1.5px 0;transform:translateY(-70%) rotate(45deg);pointer-events:none}
+.sel select{appearance:none;-webkit-appearance:none;width:100%;font:inherit;font-size:13px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:5px 26px 5px 10px;cursor:pointer;text-overflow:ellipsis}
+.sel select:hover{border-color:var(--mute)}
+.sel select:focus-visible,.seg button:focus-visible{outline:2px solid var(--review);outline-offset:1px}
+.hint{color:var(--mute);font-size:12px;margin:12px 0 0}
 </style></head><body><main>
-<header><h1>Herdmaster</h1><button id="cog" type="button" aria-label="Settings" aria-expanded="false" aria-controls="panel" title="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg></button></header>
-<div id="panel" hidden></div>
+<header><h1>Herdmaster</h1><div class="pop"><button id="cog" type="button" aria-label="Settings" aria-expanded="false" aria-controls="panel" aria-haspopup="dialog" title="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+<div id="panel" role="dialog" aria-label="Settings" hidden></div></div></header>
 <nav id="tabs" role="tablist" hidden></nav>
 <div id="note"></div>
 <div id="board"></div>
@@ -121,26 +138,32 @@ function render(b){
   pe.replaceChildren(d);
 }
 let last="",lastPanel="",tabs=[],fixed=true,cur=null,picked=false;
-function sel(opts,val,onchange){
-  const s=$("select");opts.forEach(([v,l])=>{const o=$("option","",l);o.value=v;o.selected=String(v)===val;s.append(o)});
-  s.onchange=()=>onchange(s.value);return s;
+function sel(opts,val,onchange,label){
+  const w=$("span","sel"),s=$("select");s.setAttribute("aria-label",label);
+  opts.forEach(([v,l])=>{const o=$("option","",l);o.value=v;o.selected=String(v)===val;s.append(o)});
+  s.onchange=()=>onchange(s.value);w.append(s);return w;
+}
+function seg(opts,val,onchange,label){
+  const g=$("div","seg");g.setAttribute("role","radiogroup");g.setAttribute("aria-label",label);
+  opts.forEach(([v,l])=>{const b=$("button","",l);b.type="button";b.setAttribute("role","radio");b.setAttribute("aria-checked",v===val);
+    b.onclick=()=>{g.querySelectorAll("button").forEach(x=>x.setAttribute("aria-checked",x===b));onchange(v)};g.append(b)});
+  return g;
 }
 function setRow(label,ctl){const r=$("div","set");r.append($("span","k",label),ctl);return r}
 function renderPanel(){
   const key=JSON.stringify([ctx.settings,tabs.map(p=>p.name),fixed,ctx.suffix]);
   if(key===lastPanel)return;lastPanel=key;
-  const p=document.getElementById("panel");
-  const pf=$("h3","","This browser");
-  const rows=[setRow("Theme",sel([["auto","Auto"],["light","Light"],["dark","Dark"]],prefs.theme,v=>setPref("theme",v))),
-    setRow("Done items shown",sel([5,10,25,50].map(n=>[n,n]),String(prefs.done),v=>{setPref("done",+v);last="";tick()}))];
-  if(!fixed&&tabs.length>1)rows.push(setRow("Opens first",sel([["","Most decisions needed"],...tabs.map(t=>[t.name,t.name])],prefs.tab,v=>setPref("tab",v))));
-  const sh=$("h3","","Project settings"+(ctx.suffix?" "+ctx.suffix.trim():""));
-  const sr=KEYS.map(k=>{
+  const hd=$("div","hd");hd.append($("div","ttl","Settings"),$("p","sub","Display options are saved in this browser."));
+  const rows=[setRow("Theme",seg([["auto","Auto"],["light","Light"],["dark","Dark"]],prefs.theme,v=>setPref("theme",v),"Theme")),
+    setRow("Done items shown",sel([5,10,25,50].map(n=>[n,n]),String(prefs.done),v=>{setPref("done",+v);last="";tick()},"Done items shown"))];
+  if(!fixed&&tabs.length>1)rows.push(setRow("Opens first",sel([["","Most decisions"],...tabs.map(t=>[t.name,t.name])],prefs.tab,v=>setPref("tab",v),"Opens first")));
+  const sh=$("h3","","Project"+(ctx.suffix?" "+ctx.suffix.trim():""));
+  const kv=$("div","kv");
+  KEYS.forEach(k=>{
     const v=ctx.settings[k],has=v!==undefined&&v!==null;
-    const val=$("span","v"+(has?"":" none"),has?(typeof v==="object"?JSON.stringify(v):String(v)):"default");
-    const r=$("div","set");r.append($("span","k",k),val);return r;
+    kv.append(setRow(k,$("span","v"+(has?"":" none"),has?(typeof v==="object"?JSON.stringify(v):String(v)):"not set")));
   });
-  p.replaceChildren(pf,...rows,sh,...sr,$("p","hint","Read-only. Ask the planner to change these."));
+  document.getElementById("panel").replaceChildren(hd,$("h3","","This browser"),...rows,sh,kv,$("p","hint","Read-only. Ask the planner to change these."));
 }
 function renderTabs(){
   const nav=document.getElementById("tabs");
@@ -176,7 +199,11 @@ async function tick(){
     if(key!==last){last=key;render(b)}
   }catch(_){note.textContent="Viewer server unreachable. Retrying."}
 }
-document.getElementById("cog").onclick=e=>{const p=document.getElementById("panel");p.hidden=!p.hidden;e.currentTarget.setAttribute("aria-expanded",!p.hidden)};
+const cog=document.getElementById("cog"),panel=document.getElementById("panel");
+function togglePanel(open){panel.hidden=!open;cog.setAttribute("aria-expanded",open)}
+cog.onclick=()=>togglePanel(panel.hidden);
+document.addEventListener("click",e=>{if(!panel.hidden&&!e.target.closest(".pop"))togglePanel(false)});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!panel.hidden){togglePanel(false);cog.focus()}});
 tick();setInterval(tick,3000);
 </script></body></html>
 """

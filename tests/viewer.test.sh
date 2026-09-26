@@ -23,4 +23,12 @@ curl -s "http://127.0.0.1:$PORT/" | grep -q 'Herdmaster board' || fail "page"
 [[ $(code -X POST "http://127.0.0.1:$PORT/tasks.json") == 405 ]] || fail "POST should be 405"
 [[ $(code -X DELETE "http://127.0.0.1:$PORT/") == 405 ]] || fail "DELETE should be 405"
 lsof -nP -a -p "$PID" -iTCP -sTCP:LISTEN | grep -q "127.0.0.1:$PORT" || fail "not bound to 127.0.0.1"
+set +e
+python3 "$V" --project demo --port "$PORT" >"$T/dup" 2>&1
+RC=$?
+set -e
+[[ $RC -ne 0 ]] || fail "second viewer on busy port should exit non-zero"
+[[ $(wc -l < "$T/dup") -eq 1 ]] || fail "busy port should print one line"
+grep -q "port $PORT is already in use.*--port" "$T/dup" || fail "busy port message"
+grep -q Traceback "$T/dup" && fail "busy port traceback"
 echo ok

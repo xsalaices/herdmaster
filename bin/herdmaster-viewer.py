@@ -4,6 +4,7 @@ Usage: herdmaster-viewer.py [--project NAME] [--port N]
 Project defaults to $HERDMASTER_PROJECT, port to $HERDMASTER_VIEWER_PORT or 8765. Binds 127.0.0.1 only.
 Single-threaded stdlib server: fine for one local viewer, swap in ThreadingHTTPServer if several tabs stall it."""
 import argparse
+import errno
 import json
 import os
 import sys
@@ -143,7 +144,12 @@ def main():
     if not a.project or "/" in a.project or a.project.startswith("."):
         sys.exit("herdmaster-viewer: set HERDMASTER_PROJECT or pass --project NAME")
     path = os.path.expanduser("~/.claude/orchestrator/%s/tasks.json" % a.project)
-    srv = HTTPServer(("127.0.0.1", a.port), make_handler(a.project, path))
+    try:
+        srv = HTTPServer(("127.0.0.1", a.port), make_handler(a.project, path))
+    except OSError as e:
+        if e.errno != errno.EADDRINUSE:
+            raise
+        sys.exit("herdmaster-viewer: port %d is already in use; pass --port N to pick another" % a.port)
     print("herdmaster viewer: http://127.0.0.1:%d/ (project %s)" % (srv.server_address[1], a.project), flush=True)
     try:
         srv.serve_forever()

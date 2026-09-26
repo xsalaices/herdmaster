@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Read-only localhost viewer for ~/.claude/orchestrator/<project>/tasks.json (see docs/design/board.md).
 Usage: herdmaster-viewer.py [--project NAME] [--port N]
-Project defaults to $HERDMASTER_PROJECT, port to $HERDMASTER_VIEWER_PORT or 8765. Binds 127.0.0.1 only.
+Without a project (--project or $HERDMASTER_PROJECT) it shows a tab per ~/.claude/orchestrator/*/tasks.json.
+Port defaults to $HERDMASTER_VIEWER_PORT or 8765. Binds 127.0.0.1 only.
 Single-threaded stdlib server: fine for one local viewer, swap in ThreadingHTTPServer if several tabs stall it."""
 import argparse
 import errno
 import json
 import os
+import re
 import sys
+from urllib.parse import parse_qs, urlsplit
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 PAGE = r"""<!doctype html>
@@ -35,45 +38,109 @@ h2 .n{font-weight:600}
 .warn{color:var(--fail);font-size:13px;margin-left:8px}
 .ask{--c:var(--ask)}.review{--c:var(--review)}.working{--c:var(--work)}.ready{--c:var(--ready)}.failed{--c:var(--fail)}
 .empty{color:var(--mute);padding:12px 2px}
+#tabs{display:flex;gap:4px;overflow-x:auto;margin:0 0 20px;border-bottom:1px solid var(--line);scrollbar-width:none}
+#tabs::-webkit-scrollbar{display:none}
+#tabs button{flex:none;display:flex;align-items:center;gap:6px;background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;padding:8px 12px;font:inherit;font-size:14px;color:var(--mute);cursor:pointer}
+#tabs button:hover{color:var(--ink)}
+#tabs button[aria-selected=true]{color:var(--ink);font-weight:600;border-bottom-color:var(--ink)}
+.badge{font-size:11px;font-weight:700;line-height:1;border-radius:999px;padding:3px 7px;background:var(--ask);color:var(--bg)}
+.acts{flex-basis:100%;display:flex;flex-wrap:wrap;gap:6px}
+.acts button{font:12px ui-monospace,Menlo,monospace;color:var(--mute);background:none;border:1px solid var(--line);border-radius:6px;padding:2px 8px;cursor:pointer}
+.acts button:hover,.acts button:focus-visible{color:var(--ink);border-color:var(--mute)}
+button:focus-visible{outline:2px solid var(--review);outline-offset:1px}
+details{margin-top:4px}
+summary{cursor:pointer;list-style:none;font-size:13px;letter-spacing:.06em;text-transform:uppercase;font-weight:700;color:var(--mute);padding:6px 0}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"\25B8";display:inline-block;width:1.2em;transition:transform .15s}
+details[open] summary::before{transform:rotate(90deg)}
+.row.past{opacity:.75}
 #note{font-size:13px;color:var(--fail);margin-bottom:16px}
 </style></head><body><main>
+<nav id="tabs" role="tablist" hidden></nav>
 <div id="note"></div>
 <div id="board"></div>
+<div id="past"></div>
 </main>
 <script>
 const $=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
-const STATUS={"in review":["review","In review"],"finished":["review","In review"],"working":["working","Working"],"blocked":["working","Working"],"approved":["working","Working"],"deploy-ready":["ready","Ready to deploy"],"failed":["failed","Failed"]};
+const STATUS={"in review":["review","In review"],"finished":["review","In review"],"working":["working","Working"],"blocked":["working","Working"],"approved":["working","Working"],"paused":["working","Paused"],"deploy-ready":["ready",null],"failed":["failed","Failed"]};
 const ORDER=["review","failed","working","ready"];
-function row(e,cls,label){
-  const r=$("div","row "+cls);r.append($("span","tag",(e.id||"").replace(/-0*/,"")),$("span","t",e.title||"(untitled)"));
+const short=id=>(id||"").replace(/-0*/,"");
+let ctx={suffix:"",word:"deploy"},pastOpen=false;
+function copy(text,btn){
+  const done=()=>{const o=btn.textContent;btn.textContent="copied";setTimeout(()=>{btn.textContent=o},1000)};
+  const cmd=text+ctx.suffix;
+  if(navigator.clipboard)navigator.clipboard.writeText(cmd).then(done,()=>{});
+}
+function acts(cmds){
+  const d=$("div","acts");
+  cmds.forEach(c=>{const b=$("button","",c);b.type="button";b.title="Copy: "+c+ctx.suffix;b.onclick=()=>copy(c,b);d.append(b)});return d;
+}
+function row(e,cls,label,cmds,past){
+  const r=$("div","row "+cls+(past?" past":""));r.append($("span","tag",short(e.id)),$("span","t",e.title||"(untitled)"));
   if((e.flags||[]).length)r.append($("span","warn","a decision changed"));
   if(label)r.append($("span","pill",label));
   if(e.note)r.append($("div","note",e.note));
-  if(e.recommend)r.append($("div","rec","Recommended: "+e.recommend));return r;
+  if(e.recommend)r.append($("div","rec","Recommended: "+e.recommend));
+  if(cmds&&cmds.length)r.append(acts(cmds));return r;
 }
 function section(title,rows,none){
   const s=$("section"),h=$("h2","",title);h.append($("span","n",rows.length));s.append(h);
   if(!rows.length)s.append($("div","empty",none));
   rows.forEach(r=>s.append(r));return s;
 }
+function taskCmds(c,e){
+  const i=short(e.id),w=ctx.word;
+  if(c==="working")return e.status==="paused"?["stop "+i]:["pause "+i,"stop "+i];
+  if(c==="ready")return [w+" "+i,w+" "+i+" when done"];
+  return [];
+}
 function render(b){
   const es=Array.isArray(b.entries)?b.entries:[];
-  const ds=es.filter(e=>e.kind==="decision"&&e.status==="open").map(e=>row(e,"ask","Needs you"));
-  const tasks=es.filter(e=>e.kind!=="decision").map(e=>{const [c,l]=STATUS[e.status]||["working","Working"];return [c,l,e]});
+  const ds=es.filter(e=>e.kind==="decision"&&e.status==="open").map(e=>row(e,"ask","Needs you",["approve "+short(e.id),"reject "+short(e.id)]));
+  const tasks=es.filter(e=>e.kind!=="decision"&&e.status!=="done"&&e.status!=="cancelled").map(e=>{const [c,l]=STATUS[e.status]||["working","Working"];return [c,l||"Ready to "+ctx.word,e]});
   tasks.sort((x,y)=>ORDER.indexOf(x[0])-ORDER.indexOf(y[0]));
-  document.getElementById("board").replaceChildren(section("Decisions needed",ds,"Nothing needs you."),section("Tasks",tasks.map(([c,l,e])=>row(e,c,l)),"No tasks yet."));
+  document.getElementById("board").replaceChildren(section("Decisions needed",ds,"Nothing needs you."),section("Tasks",tasks.map(([c,l,e])=>row(e,c,l,taskCmds(c,e))),"No tasks yet."));
+  const past=es.filter(e=>e.kind!=="decision"&&(e.status==="done"||e.status==="cancelled"));
+  const pe=document.getElementById("past");
+  if(!past.length){pe.replaceChildren();return}
+  past.sort((x,y)=>String(y.updated||"").localeCompare(String(x.updated||"")));
+  const d=$("details"),s=$("summary","","Done");s.append(" ",$("span","n",past.length));d.append(s);d.open=pastOpen;
+  d.ontoggle=()=>{pastOpen=d.open};
+  past.slice(0,10).forEach(e=>d.append(row(e,"working",e.status==="cancelled"?"cancelled":"done",null,true)));
+  pe.replaceChildren(d);
 }
-let last="";
+let last="",tabs=[],fixed=true,cur=null,picked=false;
+function renderTabs(){
+  const nav=document.getElementById("tabs");
+  nav.hidden=fixed;if(fixed)return;
+  nav.replaceChildren(...tabs.map(p=>{
+    const b=$("button","",p.name);b.type="button";b.setAttribute("role","tab");b.setAttribute("aria-selected",p.name===cur);
+    if(p.needed>0){b.append($("span","badge",p.needed));b.title=p.needed+" decision"+(p.needed>1?"s":"")+" needed"}
+    b.onclick=()=>{cur=p.name;picked=true;last="";tick()};return b;
+  }));
+}
 async function tick(){
   const note=document.getElementById("note");
   try{
-    const r=await fetch("/tasks.json",{cache:"no-store"});
+    const pr=await fetch("/projects.json",{cache:"no-store"});
+    const pj=await pr.json();
+    fixed=pj.fixed;tabs=pj.projects;
+    if(!tabs.some(p=>p.name===cur))picked=false;
+    if(!picked)cur=tabs.reduce((m,p)=>!m||p.needed>m.needed?p:m,null)?.name||null;
+    ctx.suffix=!fixed&&tabs.length>1?" ("+cur+")":"";
+    renderTabs();
+    if(cur===null&&!fixed){note.textContent="No boards yet.";document.getElementById("board").replaceChildren();document.getElementById("past").replaceChildren();return}
+    const q=fixed?"":"?project="+encodeURIComponent(cur);
+    const [r,sr]=await Promise.all([fetch("/tasks.json"+q,{cache:"no-store"}),fetch("/settings.json"+q,{cache:"no-store"})]);
     const txt=await r.text();
     if(!r.ok){let m="Board unavailable";try{m=JSON.parse(txt).error||m}catch(_){}
       note.textContent=m;return}
     let b;try{b=JSON.parse(txt)}catch(_){note.textContent="Board file is not valid JSON. Showing the last good view.";return}
+    try{ctx.word=(await sr.json()).release||"deploy"}catch(_){ctx.word="deploy"}
     note.textContent="";
-    if(txt!==last){last=txt;render(b)}
+    const key=cur+"\n"+ctx.word+"\n"+ctx.suffix+"\n"+txt;
+    if(key!==last){last=key;render(b)}
   }catch(_){note.textContent="Viewer server unreachable. Retrying."}
 }
 tick();setInterval(tick,3000);
@@ -81,7 +148,45 @@ tick();setInterval(tick,3000);
 """
 
 
-def make_handler(project, path):
+NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+RELEASE_WORDS = ("merge", "deploy", "push", "ship")
+
+
+def read_json(path):
+    with open(path, encoding="utf-8") as f:
+        return json.loads(f.read())
+
+
+def open_decisions(path):
+    try:
+        entries = read_json(path).get("entries", [])
+        return sum(1 for e in entries if isinstance(e, dict) and e.get("kind") == "decision" and e.get("status") == "open")
+    except (OSError, ValueError, AttributeError):
+        return 0
+
+
+def list_projects(root):
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return []
+    out = []
+    for n in names:
+        board = os.path.join(root, n, "tasks.json")
+        if NAME_RE.fullmatch(n) and os.path.isfile(board):
+            out.append({"name": n, "needed": open_decisions(board)})
+    return out
+
+
+def release_word(root, project):
+    try:
+        w = read_json(os.path.join(root, project, "settings.json")).get("release")
+    except (OSError, ValueError, AttributeError):
+        return "deploy"
+    return w if w in RELEASE_WORDS else "deploy"
+
+
+def make_handler(fixed, root):
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code, body, ctype):
             data = body.encode()
@@ -95,15 +200,38 @@ def make_handler(project, path):
         def _json_error(self, code, msg):
             self._send(code, json.dumps({"error": msg}), "application/json")
 
+        def _project(self, query):
+            if fixed:
+                return fixed
+            name = (parse_qs(query).get("project") or [""])[0]
+            if not NAME_RE.fullmatch(name) or ".." in name:
+                self._json_error(400, "Invalid project name")
+                return None
+            return name
+
         def do_GET(self):
-            route = self.path.split("?", 1)[0]
+            u = urlsplit(self.path)
+            route = u.path
             if route in ("/", "/index.html"):
                 self._send(200, PAGE, "text/html; charset=utf-8")
-            elif route == "/project":
-                self._send(200, project, "text/plain; charset=utf-8")
+            elif route == "/project" and fixed:
+                self._send(200, fixed, "text/plain; charset=utf-8")
+            elif route == "/projects.json":
+                if fixed:
+                    projects = [{"name": fixed, "needed": open_decisions(os.path.join(root, fixed, "tasks.json"))}]
+                else:
+                    projects = list_projects(root)
+                self._send(200, json.dumps({"fixed": bool(fixed), "projects": projects}), "application/json")
+            elif route == "/settings.json":
+                project = self._project(u.query)
+                if project:
+                    self._send(200, json.dumps({"release": release_word(root, project)}), "application/json")
             elif route == "/tasks.json":
+                project = self._project(u.query)
+                if not project:
+                    return
                 try:
-                    with open(path, encoding="utf-8") as f:
+                    with open(os.path.join(root, project, "tasks.json"), encoding="utf-8") as f:
                         raw = f.read()
                 except FileNotFoundError:
                     return self._json_error(404, "No board yet for project '%s'" % project)
@@ -141,16 +269,16 @@ def main():
     ap.add_argument("--project", default=os.environ.get("HERDMASTER_PROJECT"))
     ap.add_argument("--port", type=int, default=int(os.environ.get("HERDMASTER_VIEWER_PORT", "8765")))
     a = ap.parse_args()
-    if not a.project or "/" in a.project or a.project.startswith("."):
-        sys.exit("herdmaster-viewer: set HERDMASTER_PROJECT or pass --project NAME")
-    path = os.path.expanduser("~/.claude/orchestrator/%s/tasks.json" % a.project)
+    if a.project and (not NAME_RE.fullmatch(a.project) or ".." in a.project):
+        sys.exit("herdmaster-viewer: invalid project name '%s'" % a.project)
+    root = os.path.expanduser("~/.claude/orchestrator")
     try:
-        srv = HTTPServer(("127.0.0.1", a.port), make_handler(a.project, path))
+        srv = HTTPServer(("127.0.0.1", a.port), make_handler(a.project, root))
     except OSError as e:
         if e.errno != errno.EADDRINUSE:
             raise
         sys.exit("herdmaster-viewer: port %d is already in use; pass --port N to pick another" % a.port)
-    print("herdmaster viewer: http://127.0.0.1:%d/ (project %s)" % (srv.server_address[1], a.project), flush=True)
+    print("herdmaster viewer: http://127.0.0.1:%d/ (%s)" % (srv.server_address[1], "project " + a.project if a.project else "all projects"), flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

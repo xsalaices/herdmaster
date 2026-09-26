@@ -30,6 +30,10 @@ What it does, and only this:
 | `HERDMASTER_REAP_NAMES` | `chrome-headless-shell` | exact process names cpu-reaper may kill when orphaned |
 | `HERDMASTER_IGNORE_PRESSURE` | unset | emergency override for the guard; do not set it in normal use |
 | `HERDMASTER_MODEL_DEFAULT` / `_DEEP` / `_LIGHT` | your choice | model IDs the skills refer to (default = Sonnet, deep = Opus, light = Haiku) |
+| `HERDMASTER_PROJECT` | unset | project name; the board lives at `~/.claude/orchestrator/<project>/tasks.json` (`herdmaster-board.sh`) |
+| `HERDMASTER_WORKER_LAYOUT` | `tab` | `tab` puts workers in a grid on a workers tab; `main` keeps them on the current tab (`herdmaster-layout.sh`) |
+| `HERDMASTER_GRID_PANES` | 6 | panes per workers-tab grid; overflow opens another workers tab |
+| `HERDMASTER_MAX_PANES` | 4 | total panes on the current tab when layout is `main`; beyond that workers go to a workers tab |
 
 ## 4. Use
 

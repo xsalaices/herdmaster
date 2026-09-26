@@ -4,6 +4,9 @@
 #        herdmaster-board.sh status <id> <state>
 #        herdmaster-board.sh attempt <id> <status> [feedback] [link]
 #        herdmaster-board.sh supersede <id>
+#        herdmaster-board.sh release-when-done <id> [true|false]
+#        herdmaster-board.sh settings get [key] | settings set <key> <value>   keys: release, grid_panes, worker_layout, max_panes
+#        herdmaster-board.sh archive
 #        herdmaster-board.sh count | show
 # Project comes from $HERDMASTER_PROJECT. Single writer (the orchestrator); no lock, so concurrent writers can lose updates.
 set -euo pipefail
@@ -16,8 +19,9 @@ case $HERDMASTER_PROJECT in */*|.*) die "invalid HERDMASTER_PROJECT" ;; esac
 DIR="$HOME/.claude/orchestrator/$HERDMASTER_PROJECT"
 BOARD="$DIR/tasks.json"
 SHOWN="$DIR/tasks.shown"
-TASK_STATES="working finished in\ review approved deploy-ready blocked failed"
-DECISION_STATES="open settled superseded"
+SETTINGS="$DIR/settings.json"
+ARCHIVE="$DIR/tasks-archive.json"
+KEEP_FINISHED=200
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
@@ -38,7 +42,7 @@ need_entry() {
 valid_state() {
   local kind=$1 s=$2
   case $kind in
-    task) [[ $s =~ ^(working|finished|in\ review|approved|deploy-ready|blocked|failed)$ ]] ;;
+    task) [[ $s =~ ^(working|finished|in\ review|approved|deploy-ready|blocked|failed|paused|done|cancelled)$ ]] ;;
     decision) [[ $s =~ ^(open|settled|superseded)$ ]] ;;
   esac
 }
@@ -115,6 +119,62 @@ cmd_supersede() {
       else . end)')"
 }
 
+cmd_release_when_done() {
+  local id=${1:-} val=${2:-true}
+  [[ -n $id ]] || die "release-when-done: <id> required"
+  [[ $val == true || $val == false ]] || die "release-when-done: value must be true or false"
+  need_entry "$id"
+  load | jq -e --arg id "$id" 'any(.entries[]; .id == $id and .kind == "task")' >/dev/null \
+    || die "release-when-done: $id is not a task"
+  save "$(load | jq --arg id "$id" --argjson v "$val" --arg ts "$(now)" \
+    '.entries |= map(if .id == $id then .release_when_done = $v | .updated = $ts else . end)')"
+}
+
+settings_json() { if [[ -f $SETTINGS ]]; then cat "$SETTINGS"; else echo '{}'; fi; }
+
+cmd_settings() {
+  local op=${1:-} key=${2:-} val=${3:-}
+  case $op in
+    get)
+      if [[ -z $key ]]; then settings_json | jq -S .; return; fi
+      [[ $key =~ ^(release|grid_panes|worker_layout|max_panes)$ ]] || die "settings: unknown key '$key'"
+      settings_json | jq -r --arg k "$key" '(.[$k] // (if $k == "release" then "deploy" else empty end)) | tostring' ;;
+    set)
+      [[ -n $key && -n $val ]] || die "settings set: <key> <value> required"
+      local json
+      case $key in
+        release) [[ $val =~ ^(merge|deploy|push|ship)$ ]] || die "settings: release must be merge, deploy, push or ship"
+          json=$(jq -cn --arg v "$val" '$v') ;;
+        worker_layout) [[ $val == tab || $val == main ]] || die "settings: worker_layout must be tab or main"
+          json=$(jq -cn --arg v "$val" '$v') ;;
+        grid_panes|max_panes) [[ $val =~ ^[1-9][0-9]*$ ]] || die "settings: $key must be a positive integer"
+          json=$val ;;
+        *) die "settings: unknown key '$key'" ;;
+      esac
+      mkdir -p "$DIR"
+      local tmp; tmp=$(mktemp "$DIR/.settings.XXXXXX")
+      settings_json | jq --arg k "$key" --argjson v "$json" '.[$k] = $v' > "$tmp" && mv "$tmp" "$SETTINGS" ;;
+    *) die "settings: expected get or set" ;;
+  esac
+}
+
+# Ceiling: archive is one JSON file read and rewritten whole per run; if it grows large, switch to one file per month.
+cmd_archive() {
+  [[ -f $BOARD ]] || return 0
+  local split moved
+  split=$(load | jq -c --argjson keep "$KEEP_FINISHED" '
+    [.entries[] | select(.kind == "task" and (.status == "done" or .status == "cancelled"))
+      | {id, updated}] | sort_by(.updated) | reverse | .[$keep:] | map(.id)')
+  moved=$(jq length <<<"$split")
+  (( moved > 0 )) || return 0
+  local arch; if [[ -f $ARCHIVE ]]; then arch=$(cat "$ARCHIVE"); else arch='{"schema_version":1,"entries":[]}'; fi
+  local tmp; tmp=$(mktemp "$DIR/.archive.XXXXXX")
+  jq --argjson ids "$split" '.entries += [$b.entries[] | select(.id as $i | $ids | index($i))]' \
+    --argjson b "$(load)" <<<"$arch" > "$tmp" && mv "$tmp" "$ARCHIVE"
+  save "$(load | jq --argjson ids "$split" '.entries |= map(select(.id as $i | $ids | index($i) | not))')"
+  echo "archived $moved"
+}
+
 count_line() {
   load | jq -r '
     def age: if . < 3600 then "\(. / 60 | floor)m" elif . < 172800 then "\(. / 3600 | floor)h" else "\(. / 86400 | floor)d" end;
@@ -154,7 +214,10 @@ case $sub in
   status) cmd_status "$@" ;;
   attempt) cmd_attempt "$@" ;;
   supersede) cmd_supersede "$@" ;;
+  release-when-done) cmd_release_when_done "$@" ;;
+  settings) cmd_settings "$@" ;;
+  archive) cmd_archive ;;
   count) cmd_count ;;
   show) cmd_show ;;
-  *) sed -n '2,7p' "$0"; exit 2 ;;
+  *) sed -n '2,10p' "$0"; exit 2 ;;
 esac

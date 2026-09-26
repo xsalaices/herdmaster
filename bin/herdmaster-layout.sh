@@ -3,6 +3,7 @@
 # Usage: herdmaster-layout.sh [--dry-run] new-worker <label> <command...>   prints the new pane id
 #        herdmaster-layout.sh [--dry-run] new-orchestrator <command...>    splits the current pane right, labels it orchestrator, prints the new pane id
 #        herdmaster-layout.sh [--dry-run] rebalance [pane]                 equal widths for the tab of pane (default: current)
+# Per-project settings.json (worker_layout, grid_panes, max_panes) overrides the env vars below.
 # Env: HERDMASTER_WORKER_LAYOUT (tab|main, default tab), HERDMASTER_GRID_PANES (default 6),
 #      HERDMASTER_MAX_PANES (default 4, workers on the main tab when layout is main), HERDMASTER_PROJECT.
 # --dry-run prints the mutating herdr commands instead of running them; read-only queries still run.
@@ -18,6 +19,12 @@ DRY=0
 LAYOUT=${HERDMASTER_WORKER_LAYOUT:-tab}
 GRID=${HERDMASTER_GRID_PANES:-6}
 MAXP=${HERDMASTER_MAX_PANES:-4}
+SETTINGS="$HOME/.claude/orchestrator/${HERDMASTER_PROJECT:-}/settings.json"
+if [[ -n ${HERDMASTER_PROJECT:-} && -f $SETTINGS ]]; then
+  LAYOUT=$(jq -r --arg d "$LAYOUT" '.worker_layout // $d' "$SETTINGS")
+  GRID=$(jq -r --arg d "$GRID" '.grid_panes // $d' "$SETTINGS")
+  MAXP=$(jq -r --arg d "$MAXP" '.max_panes // $d' "$SETTINGS")
+fi
 FIXED_PANES=2 # planner and orchestrator share the main tab; everything else there is a worker
 [[ $LAYOUT == tab || $LAYOUT == main ]] || die "HERDMASTER_WORKER_LAYOUT must be tab or main"
 [[ $GRID =~ ^[1-9][0-9]*$ && $MAXP =~ ^[1-9][0-9]*$ ]] || die "pane limits must be positive integers"
@@ -136,5 +143,5 @@ case $sub in
   new-worker) cmd_new_worker "$@" ;;
   new-orchestrator) cmd_new_orchestrator "$@" ;;
   rebalance) cmd_rebalance "$@" ;;
-  *) sed -n '2,8p' "$0"; exit 2 ;;
+  *) sed -n '2,9p' "$0"; exit 2 ;;
 esac

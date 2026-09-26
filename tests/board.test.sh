@@ -34,4 +34,28 @@ eq "$("$B" count)" ""
 "$B" status "$t2" "in review"
 [[ $("$B" count) == "Board: 2 in review (oldest 0m), 1 flagged" ]] || { echo "FAIL: count after change" >&2; exit 1; }
 eq "$("$B" count)" ""
+
+"$B" status "$t2" paused; "$B" status "$t2" done; "$B" status "$t2" cancelled
+"$B" status "$t2" bogus 2>/dev/null && { echo "FAIL: bad status accepted" >&2; exit 1; }
+"$B" release-when-done "$t1"
+eq "$(jq -r '.entries[] | select(.id == "T-001") | .release_when_done' "$f")" true
+"$B" release-when-done "$t1" false
+eq "$(jq -r '.entries[] | select(.id == "T-001") | .release_when_done' "$f")" false
+"$B" release-when-done "$d" 2>/dev/null && { echo "FAIL: decision accepted" >&2; exit 1; }
+
+s="$T/.claude/orchestrator/demo/settings.json"
+eq "$("$B" settings get release)" deploy
+"$B" settings set release merge
+"$B" settings set grid_panes 4
+eq "$("$B" settings get release)" merge
+eq "$(jq -r '.grid_panes | type' "$s")" number
+"$B" settings set release nope 2>/dev/null && { echo "FAIL: bad release accepted" >&2; exit 1; }
+"$B" settings set grid_panes 0 2>/dev/null && { echo "FAIL: bad grid accepted" >&2; exit 1; }
+
+jq '.entries += [range(205) | {id: "T-\(100 + .)", kind: "task", title: "x", status: "done", review: "auto", depends_on: [], attempts: [], created: "2020-01-01T00:00:00Z", updated: "2021-01-01T00:\(10 + (. / 60 | floor)):\(10 + (. % 60))Z"}]' "$f" > "$T/big.json"
+mv "$T/big.json" "$f"
+eq "$("$B" archive)" "archived 6"
+eq "$(jq '[.entries[] | select(.status == "done" or .status == "cancelled")] | length' "$f")" 200
+eq "$(jq '.entries | length' "$T/.claude/orchestrator/demo/tasks-archive.json")" 6
+eq "$("$B" archive)" ""
 echo "ok"

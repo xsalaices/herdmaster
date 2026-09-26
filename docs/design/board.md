@@ -31,6 +31,7 @@ Top level: `schema_version` and `entries[]`. Viewers ignore unknown fields.
 | `depends_on` | List of entry ids |
 | `note` | Optional one or two lines of context shown under the title |
 | `recommend` | Optional, for decisions: the planner's recommended answer and why |
+| `release_when_done` | Optional task boolean; when true the orchestrator takes the task to the project's release step once it is done |
 | `attempts[]` | Each: `status`, `feedback`, PR or pane link |
 | `created`, `updated` | ISO 8601 timestamps |
 
@@ -69,9 +70,26 @@ Top level: `schema_version` and `entries[]`. Viewers ignore unknown fields.
 
 ## Lifecycles
 
-Tasks: `working` -> `finished` -> `in review` -> `approved` -> `deploy-ready`. `blocked` and `failed` are side states.
+Tasks: `working` -> `finished` -> `in review` -> `approved` -> `deploy-ready`. `approved` may go on to `done`. `blocked`, `failed`, `paused` and `cancelled` are side states; `done` and `cancelled` are terminal.
 
 Decisions: `open` -> `settled` or `superseded`. A superseded decision flags every task that depends on it. Open decisions never expire and never disappear. There are no repeated pings.
+
+## Settings
+
+Per project: `~/.claude/orchestrator/<project>/settings.json`, edited with `herdmaster-board.sh settings get|set <key> <value>`.
+
+| Key | Values | Default |
+|---|---|---|
+| `release` | `merge`, `deploy`, `push`, `ship`: the word for the final step | `deploy` |
+| `grid_panes` | positive integer | env, then 6 |
+| `worker_layout` | `tab` or `main` | env, then `tab` |
+| `max_panes` | positive integer | env, then 4 |
+
+Precedence for the layout keys: settings file, then the `HERDMASTER_*` environment variable, then the built-in default. `herdmaster-layout.sh` reads the file.
+
+## Archive
+
+`herdmaster-board.sh archive` keeps the newest 200 `done` and `cancelled` tasks (by `updated`) on the board and moves the rest to `tasks-archive.json` beside it.
 
 ## Review mode
 

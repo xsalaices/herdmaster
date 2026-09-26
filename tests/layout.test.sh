@@ -55,4 +55,14 @@ has "$out" "HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=planner-1 claude hi"
 
 out=$("$L" --dry-run rebalance 2>&1)
 has "$out" "pane resize --pane pane-b --direction left"
+
+so="$T/.claude/orchestrator/demo/settings.json"
+printf '{"grid_panes":2}\n' > "$so"
+export FAKE_TABS='[{"tab_id":"tab-2","workspace_id":"ws-1","label":"workers","pane_count":2}]'
+out=$(HERDMASTER_GRID_PANES=6 "$L" --dry-run new-worker build echo hi 2>&1)
+has "$out" "--label workers 2"
+printf '{"worker_layout":"main"}\n' > "$so"
+out=$("$L" --dry-run new-worker build echo hi 2>&1)
+has "$out" "pane split"
+rm -f -- "$so"
 echo ok

@@ -22,7 +22,8 @@ Model names are variables: `$HERDMASTER_MODEL_DEFAULT`, `$HERDMASTER_MODEL_DEEP`
 
 1. Read the project CLAUDE.md, the files above, `herdr pane list`, `ListAgents` and open PRs.
 2. Tell every live worker pane to report to YOU (SendMessage with your session name). Subscribe with `notify_when_idle: true` and re-arm after every notice (subscriptions are one-shot).
-3. Write a fresh `status.md`.
+3. If `design-queue.md` or `decisions.md` exist in the project directory and `.legacy-imported` is missing next to `tasks.json`, run `herdmaster-board.sh import-legacy` once and report its counts to the master. From then on write only to the board; never touch the old files.
+4. Write a fresh `status.md`.
 
 ## Classify every event
 

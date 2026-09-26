@@ -142,9 +142,13 @@ Launched panes get `HERDMASTER_ROLE` (`orchestrator` or `worker`) and `HERDMASTE
 
 Localhost page first: python3, bound to 127.0.0.1 only, read-only, reads `tasks.json`. A native app wrapping the same board comes later. Building either is out of scope.
 
+## Legacy import
+
+`herdmaster-board.sh import-legacy` merges `design-queue.md` and `decisions.md` from the project's orchestrator directory into the board, once. Queue entries (`## <title> (<date>, blocking: yes|no)` with `Question:`, `Options:`, `Context:`) become open decisions: note is Question plus Context, `recommend` is the option marked recommended, `blocking` is kept as a field. Each `- ` line in `decisions.md` becomes a settled decision (title is its first clause, note is the line without its date). Entries whose title is already on the board are skipped; new ids continue the `D-###` sequence. It writes `.legacy-imported` next to `tasks.json`, prints the counts, and never touches the old files.
+
 ## Open questions
 
 - Planner-to-orchestrator message formats for new task, user answer, rejection with feedback, and approval, and what the orchestrator records for each.
-- Migration of existing `design-queue.md`, `decisions.md` and `status.md`: replaced, kept as generated views, or left alone.
+- Migration of `status.md`: replaced, kept as a generated view, or left alone (queue and decisions are covered by the legacy import).
 - Viewer contract details: refresh interval, error handling for a mid-write or missing file, `schema_version` mismatch behavior.
 - Orchestrator-unavailable fallback: where a planner message waits so it is never lost.

@@ -6,6 +6,7 @@
 #        herdmaster-board.sh supersede <id>
 #        herdmaster-board.sh release-when-done <id> [true|false]
 #        herdmaster-board.sh settings get [key] | settings set <key> <value>   keys: release, grid_panes, worker_layout, max_panes
+#        herdmaster-board.sh import-legacy
 #        herdmaster-board.sh archive
 #        herdmaster-board.sh count | show
 # Project comes from $HERDMASTER_PROJECT. Single writer (the orchestrator); no lock, so concurrent writers can lose updates.
@@ -208,6 +209,76 @@ cmd_show() {
     + (if (.flags // []) | length > 0 then "\t[" + (.flags | join(",")) + "]" else "" end)'
 }
 
+legacy_open_json() {
+  awk '
+    function flush() {
+      if (title != "") {
+        gsub(/^[ \t]+|[ \t]+$/, "", q); gsub(/^[ \t]+|[ \t]+$/, "", c)
+        print title "\t" block "\t" q "\t" c "\t" opts
+      }
+      title = ""; q = ""; c = ""; opts = ""
+    }
+    /^## / {
+      flush()
+      t = substr($0, 4); block = "no"
+      if (match(t, /, blocking: (yes|no)\)[ \t]*$/)) { block = substr(t, RSTART + 12, RLENGTH - 13); t = substr(t, 1, RSTART - 1); sub(/ \([^(]*$/, "", t) }
+      else sub(/ \([^(]*\)[ \t]*$/, "", t)
+      title = t; next
+    }
+    title == "" { next }
+    /^Question:/ { sub(/^Question:[ \t]*/, ""); q = $0; next }
+    /^Context:/ { sub(/^Context:[ \t]*/, ""); c = $0; next }
+    /^Options:/ { sub(/^Options:[ \t]*/, ""); opts = $0; next }
+    { if (opts != "" && c == "") opts = opts " " $0 }
+    END { flush() }
+  ' "$1" | jq -Rn '
+    [inputs | split("\t") | select(.[0] != "") | {
+      title: .[0], blocking: (.[1] == "yes"),
+      note: ([.[2], .[3]] | map(select(length > 0)) | join(" ")),
+      recommend: ((.[4] // "") | [scan("[A-Z]\\)[^()]*\\(recommended[^)]*\\)")] | (.[0] // "")
+        | sub("^[A-Z]\\) *"; "") | sub(" *\\(recommended[^)]*\\)"; ""))
+    }]'
+}
+
+legacy_settled_json() {
+  jq -Rn '
+    [inputs | select(startswith("- "))
+      | .[2:]
+      | sub("^[0-9]{4}-[0-9]{2}-[0-9]{2}( [0-9]{1,2}:[0-9]{2})? *"; "")
+      | sub("^\\([^)]*\\): *"; "")
+      | select(length > 0)
+      | {title: (split(". ")[0] | split(": ")[0] | .[:80]), note: .[:240]}]' < "$1"
+}
+
+cmd_import_legacy() {
+  local legacy="$HOME/.claude/orchestrator/$HERDMASTER_PROJECT"
+  local marker="$DIR/.legacy-imported"
+  local dq="$legacy/design-queue.md" dc="$legacy/decisions.md"
+  [[ -f $dq || -f $dc ]] || { echo "imported open 0, imported settled 0, skipped 0"; return 0; }
+  [[ -f $marker ]] && { echo "already imported"; return 0; }
+  local open='[]' settled='[]'
+  [[ -f $dq ]] && open=$(legacy_open_json "$dq")
+  [[ -f $dc ]] && settled=$(legacy_settled_json "$dc")
+  local out
+  out=$(jq --argjson open "$open" --argjson settled "$settled" --arg ts "$(now)" '
+    def mk($e; $status): {id: "", kind: "decision", title: $e.title, status: $status, review: "user",
+        depends_on: [], attempts: [], created: $ts, updated: $ts}
+        + (if ($e.note // "") != "" then {note: $e.note} else {} end)
+        + (if ($e.recommend // "") != "" then {recommend: $e.recommend} else {} end)
+        + (if $e.blocking != null then {blocking: $e.blocking} else {} end);
+    reduce ((($open | map(mk(.; "open"))) + ($settled | map(mk(.; "settled"))))[]) as $x
+      ({board: ., skipped: 0, open: 0, settled: 0};
+        if (.board.entries | any(.title == $x.title)) then .skipped += 1
+        else
+          ([.board.entries[] | select(.id | startswith("D-")) | .id[2:] | tonumber] | (max // 0) + 1) as $n
+          | .board.entries += [$x | .id = "D-" + ("000" + ($n | tostring) | .[-3:])]
+          | if $x.status == "open" then .open += 1 else .settled += 1 end
+        end)' <<<"$(load)")
+  save "$(jq .board <<<"$out")"
+  : > "$marker.tmp" && mv "$marker.tmp" "$marker"
+  jq -r '"imported open \(.open), imported settled \(.settled), skipped \(.skipped)"' <<<"$out"
+}
+
 sub=${1:-}; shift || true
 case $sub in
   add) cmd_add "$@" ;;
@@ -216,8 +287,9 @@ case $sub in
   supersede) cmd_supersede "$@" ;;
   release-when-done) cmd_release_when_done "$@" ;;
   settings) cmd_settings "$@" ;;
+  import-legacy) cmd_import_legacy ;;
   archive) cmd_archive ;;
   count) cmd_count ;;
   show) cmd_show ;;
-  *) sed -n '2,10p' "$0"; exit 2 ;;
+  *) sed -n '2,11p' "$0"; exit 2 ;;
 esac

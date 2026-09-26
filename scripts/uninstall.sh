@@ -56,7 +56,7 @@ for a in lookup worker deep; do
   if cmp -s "$dest" "$REPO/agents/$a.md"; then run rm -f "$dest"; else echo "keep agent $a: $dest differs from the shipped copy"; fi
 done
 
-for f in pressure-check.sh pressure-guard.sh cpu-reaper.sh blocked-pane-watcher.sh herdmaster-board.sh herdmaster-layout.sh; do
+for f in pressure-check.sh pressure-guard.sh cpu-reaper.sh blocked-pane-watcher.sh herdmaster-board.sh herdmaster-layout.sh herdmaster-viewer.py; do
   [[ -f $HERDMASTER_HOME/bin/$f ]] && run rm -f "$HERDMASTER_HOME/bin/$f"
 done
 echo "State and logs in $HERDMASTER_HOME are kept; delete that folder by hand if you want them gone."

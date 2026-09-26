@@ -65,6 +65,7 @@ Shared state lives in `~/.claude/orchestrator/<project>/` (`master`, `orchestrat
 | `launchd/blocked-pane-watcher` | EXAMPLE: notifies when a herdr agent is blocked on a prompt |
 | `agents/*.md` | pinned-model subagents: lookup (Haiku), worker (Sonnet), deep (Opus) |
 | `bin/herdmaster-board.sh`, `bin/herdmaster-layout.sh` | board writer and worker-pane layout helpers used by the orchestrator |
+| `bin/herdmaster-viewer.py` | read-only localhost board page (127.0.0.1 only, GET only, stdlib python3); run with `--project <name>` |
 | `examples/worker-brief-template.md` | generic fleet rules for every worker brief |
 
 ## Model routing

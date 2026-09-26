@@ -42,7 +42,7 @@ say "herdmaster install (dry-run=$DRY) HOME=$HOME"
 run mkdir -p "$HERDMASTER_HOME/bin" "$HERDMASTER_HOME/state" "$HERDMASTER_HOME/logs"
 for f in "$REPO/hooks/pressure-check.sh" "$REPO/hooks/pressure-guard.sh" \
          "$REPO/launchd/cpu-reaper/cpu-reaper.sh" "$REPO/launchd/blocked-pane-watcher/blocked-pane-watcher.sh" \
-         "$REPO/bin/herdmaster-board.sh" "$REPO/bin/herdmaster-layout.sh"; do
+         "$REPO/bin/herdmaster-board.sh" "$REPO/bin/herdmaster-layout.sh" "$REPO/bin/herdmaster-viewer.py"; do
   run install -m 755 "$f" "$HERDMASTER_HOME/bin/$(basename "$f")"
 done
 

@@ -39,6 +39,8 @@ What it does, and only this:
 
 In your project's repo, run `/herdmaster`. Workers are briefed from `examples/worker-brief-template.md`.
 
+Optional board viewer: `python3 "$HERDMASTER_HOME/bin/herdmaster-viewer.py" --project <name>` serves a read-only page at `http://127.0.0.1:8765/` (change with `HERDMASTER_VIEWER_PORT`). It binds localhost only, answers GET only, and polls `tasks.json` every 3s.
+
 ## Uninstall
 
 ```sh

@@ -96,6 +96,10 @@ When the final step is a merge (the `<word> T# when done` exception, or the owne
 - Layout: tab 1 holds the master (left) and you (right); workers go in the workers tab grid. `HERDMASTER_GRID_PANES` (default 6) sets panes per grid, `HERDMASTER_WORKER_LAYOUT=main` keeps workers on the main tab up to `HERDMASTER_MAX_PANES` (default 4). No manual rebalancing.
 - Watch quota: read weekly usage from the pane footer or usage line. Past ~85%, pause non-urgent `$HERDMASTER_MODEL_DEEP` work, keep deep-model panes to a minimum, and never use high effort for batch drafting. Delegate small jobs to the `lookup`, `worker` and `deep` subagents in `~/.claude/agents/`. Width is set in the brief.
 
+## Board labels
+
+Keep herdr display metadata current with `$HERDMASTER_HOME/bin/herdmaster-labels.sh`: `workspace <workspace-id>` (project name and open-decision count tokens), `pane <pane-id> <task-id>` (title `T3 <task title> · <status>`) whenever a task's status changes, and `clear <pane-id>` when the task is done. `--dry-run` prints the herdr commands instead of running them.
+
 ## Never
 
 - Message the master with anything that isn't a blocking design decision.

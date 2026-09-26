@@ -52,7 +52,20 @@ Shared state lives in `~/.claude/orchestrator/<project>/` (`master`, `orchestrat
 | `hooks/pressure-guard.sh` | PreToolUse hook: denies heavy commands while pressure is high, telling the agent to wait 2-5 minutes and retry. Emergency override: `HERDMASTER_IGNORE_PRESSURE=1` |
 | `launchd/cpu-reaper` | kills orphaned leftovers by exact process name only, reports CPU hogs |
 | `launchd/blocked-pane-watcher` | EXAMPLE: notifies when a herdr agent is blocked on a prompt |
+| `agents/*.md` | pinned-model subagents: lookup (Haiku), worker (Sonnet), deep (Opus) |
 | `examples/worker-brief-template.md` | generic fleet rules for every worker brief |
+
+## Model routing
+
+Sonnet is the default for everything. Opus is for genuinely complex work only: hard debugging, design, audits, calibration-critical work. Three pinned-model subagents ship in `agents/` and install to `~/.claude/agents/`:
+
+| agent | model | use for |
+|---|---|---|
+| `lookup` | Haiku | lookups, greps, counts, status checks |
+| `worker` | Sonnet | routine edits, tests, docs, merges, CI |
+| `deep` | Opus | audits, design trade-offs, hard debugging |
+
+Quota rules the skills follow: pause non-urgent Opus work when weekly usage passes ~85% (read it from the pane footer or usage line), keep Opus panes to a minimum, and never use high effort for batch drafting. Every worker brief names its model (`MODEL:` line in the template).
 
 ## Quick start
 
@@ -61,6 +74,8 @@ git clone <this repo> && cd herdmaster
 scripts/install.sh --dry-run     # preview
 scripts/install.sh               # install
 ```
+
+The install step is required: the `/master` and `/orchestrator` skills, subagents and guard hooks only exist after `scripts/install.sh` copies them into `~/.claude`. The installer checks the requirements below and tells you what is missing.
 
 Then in Claude Code, inside your project's repo: `/master`. It starts (or finds) the orchestrator. See [docs/install.md](docs/install.md).
 

@@ -16,8 +16,9 @@ What it does, and only this:
 
 1. Copies helper scripts to `$HERDMASTER_HOME/bin` (default `~/.claude/herdmaster`; must live inside `~/.claude`).
 2. Copies the `master` and `orchestrator` skills to `~/.claude/skills/`. Existing skills are skipped unless `--force`.
-3. Renders `com.herdmaster.*` LaunchAgent plists from `launchd/*/*.plist.tmpl` (placeholders `__HOME__` and `__HERDMASTER_HOME__` are substituted) into `~/Library/LaunchAgents` and loads them. `pressure-check` and `cpu-reaper` by default; the example blocked-pane watcher only with `--with-watcher`.
-4. Merges the PreToolUse hook into `~/.claude/settings.json` with `jq`. It backs the file up first (`settings.json.herdmaster-backup-<timestamp>`), appends to existing `hooks.PreToolUse` without removing anything, skips if already present (idempotent), and refuses if the file is not valid JSON.
+3. Copies the `lookup`, `worker` and `deep` subagents to `~/.claude/agents/`. Existing agents are skipped unless `--force`.
+4. Renders `com.herdmaster.*` LaunchAgent plists from `launchd/*/*.plist.tmpl` (placeholders `__HOME__` and `__HERDMASTER_HOME__` are substituted) into `~/Library/LaunchAgents` and loads them. `pressure-check` and `cpu-reaper` by default; the example blocked-pane watcher only with `--with-watcher`.
+5. Merges the PreToolUse hook into `~/.claude/settings.json` with `jq`. It backs the file up first (`settings.json.herdmaster-backup-<timestamp>`), appends to existing `hooks.PreToolUse` without removing anything, skips if already present (idempotent), and refuses if the file is not valid JSON.
 
 ## 3. Configure (optional environment variables)
 
@@ -28,7 +29,7 @@ What it does, and only this:
 | `HERDMASTER_HIGH_LOAD` / `HERDMASTER_CRIT_LOAD` | 16 / 24 | load thresholds |
 | `HERDMASTER_REAP_NAMES` | `chrome-headless-shell` | exact process names cpu-reaper may kill when orphaned |
 | `HERDMASTER_IGNORE_PRESSURE` | unset | emergency override for the guard; do not set it in normal use |
-| `HERDMASTER_MODEL_DEFAULT` / `_DEEP` / `_LIGHT` | your choice | model IDs the skills refer to |
+| `HERDMASTER_MODEL_DEFAULT` / `_DEEP` / `_LIGHT` | your choice | model IDs the skills refer to (default = Sonnet, deep = Opus, light = Haiku) |
 
 ## 4. Use
 
@@ -41,4 +42,4 @@ scripts/uninstall.sh --dry-run
 scripts/uninstall.sh [--keep-skills]
 ```
 
-Removes the `com.herdmaster.*` LaunchAgents, the helper scripts, the two skills and the pressure-guard hook entry (other hooks stay; the file is backed up first). State and logs in `$HERDMASTER_HOME` are kept.
+Removes the `com.herdmaster.*` LaunchAgents, the helper scripts, the two skills, the three agents (only if unmodified) and the pressure-guard hook entry (other hooks stay; the file is backed up first). State and logs in `$HERDMASTER_HOME` are kept.

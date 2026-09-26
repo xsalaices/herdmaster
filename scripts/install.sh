@@ -22,7 +22,16 @@ SETTINGS="$CLAUDE_DIR/settings.json"
 GUARD="$HERDMASTER_HOME/bin/pressure-guard.sh"
 
 case $HERDMASTER_HOME in "$CLAUDE_DIR"/*) ;; *) echo "HERDMASTER_HOME must be inside $CLAUDE_DIR" >&2; exit 2 ;; esac
-command -v jq >/dev/null || { echo "jq is required" >&2; exit 1; }
+
+missing=0
+[[ $(uname) == Darwin ]] || { echo "requirement missing: macOS (launchd jobs are macOS-only)" >&2; missing=1; }
+for c in claude herdr jq python3; do
+  command -v "$c" >/dev/null || { echo "requirement missing: $c" >&2; missing=1; }
+done
+if (( missing )); then
+  echo "Requirements: macOS, Claude Code (claude), herdr (https://herdr.dev), jq, python3. Install the missing ones and re-run." >&2
+  exit 1
+fi
 
 run() { if (( DRY )); then echo "[dry-run] $*"; else "$@"; fi; }
 say() { echo "$*"; }
@@ -47,7 +56,18 @@ for s in master orchestrator; do
   run install -m 644 "$REPO/skills/$s/SKILL.md" "$dest/SKILL.md"
 done
 
-# 3. launchd jobs from templates
+# 3. model-routing subagents (never overwrite an existing agent unless --force)
+run mkdir -p "$CLAUDE_DIR/agents"
+for a in lookup worker deep; do
+  dest="$CLAUDE_DIR/agents/$a.md"
+  if [[ -e $dest && $FORCE -eq 0 ]]; then
+    say "skip agent $a: $dest exists (use --force to replace)"
+    continue
+  fi
+  run install -m 644 "$REPO/agents/$a.md" "$dest"
+done
+
+# 4. launchd jobs from templates
 jobs=(cpu-reaper pressure-check)
 (( WATCHER )) && jobs+=(blocked-pane-watcher)
 run mkdir -p "$LA_DIR"
@@ -64,7 +84,7 @@ for j in "${jobs[@]}"; do
   fi
 done
 
-# 4. merge the PreToolUse hook into settings.json (backup first, idempotent, never removes other hooks)
+# 5. merge the PreToolUse hook into settings.json (backup first, idempotent, never removes other hooks)
 if [[ -f $SETTINGS ]] && ! jq empty "$SETTINGS" 2>/dev/null; then
   echo "settings.json is not valid JSON; refusing to touch it" >&2; exit 1
 fi

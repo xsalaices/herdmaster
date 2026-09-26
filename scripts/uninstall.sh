@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Removes what install.sh added: com.herdmaster.* LaunchAgents, $HERDMASTER_HOME, the two skills,
-# and the pressure-guard hook entry (other hooks are left untouched).
+# the three routing agents (only if unmodified), and the pressure-guard hook entry (other hooks are left untouched).
 # Usage: scripts/uninstall.sh [--dry-run] [--keep-skills]
 set -euo pipefail
 
@@ -48,6 +48,13 @@ if (( ! KEEP_SKILLS )); then
     [[ -f $CLAUDE_DIR/skills/$s/SKILL.md ]] && { run rm -f "$CLAUDE_DIR/skills/$s/SKILL.md"; run rmdir "$CLAUDE_DIR/skills/$s" 2>/dev/null || true; }
   done
 fi
+
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+for a in lookup worker deep; do
+  dest="$CLAUDE_DIR/agents/$a.md"
+  [[ -f $dest ]] || continue
+  if cmp -s "$dest" "$REPO/agents/$a.md"; then run rm -f "$dest"; else echo "keep agent $a: $dest differs from the shipped copy"; fi
+done
 
 for f in pressure-check.sh pressure-guard.sh cpu-reaper.sh blocked-pane-watcher.sh; do
   [[ -f $HERDMASTER_HOME/bin/$f ]] && run rm -f "$HERDMASTER_HOME/bin/$f"

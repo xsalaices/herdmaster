@@ -5,7 +5,7 @@ Fill the placeholders. Keep every rule; they exist because each one prevented a 
 ```
 TASK: <one task, start immediately>
 WORKTREE: <fresh worktree for this task>
-MODEL: <model id>  (set by the orchestrator at launch)
+MODEL: <lookup=haiku | worker=sonnet | deep=opus>  (set by the orchestrator at launch; default sonnet, opus only for judgment-heavy work)
 
 CONTEXT: <spec, decision references, files to read>
 DONE WHEN: <checks that must pass>

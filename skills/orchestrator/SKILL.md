@@ -73,7 +73,7 @@ Merge when the PR is mergeable/clean AND every workflow run on its head sha succ
 - No paid API calls from the fleet, any vendor, unless the master approves first.
 - Every brief follows `examples/worker-brief-template.md`: fleet rules, "report to <your session name>, say FULLY DONE, stop", and the no-interactive-prompt line.
 - Layout: the LEFT half is the master's. New panes go on the right; split the LARGEST right-side pane, never the newest. Rebalance after every open or close (`herdr pane resize`, verify with `herdr pane layout --pane <master>`). With 5+ panes use two equal right-hand columns.
-- Watch quota. Width is set in the brief.
+- Watch quota: read weekly usage from the pane footer or usage line. Past ~85%, pause non-urgent `$HERDMASTER_MODEL_DEEP` work, keep deep-model panes to a minimum, and never use high effort for batch drafting. Delegate small jobs to the `lookup`, `worker` and `deep` subagents in `~/.claude/agents/`. Width is set in the brief.
 
 ## Never
 

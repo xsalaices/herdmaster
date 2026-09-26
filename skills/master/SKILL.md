@@ -16,6 +16,8 @@ Model names below are variables: `$HERDMASTER_MODEL_DEFAULT` (routine), `$HERDMA
 
 ## On start
 
+0. Check `command -v herdr jq python3` and that `~/.claude/herdmaster/bin/pressure-guard.sh` exists. If anything is missing, tell the user the requirements (macOS, Claude Code, herdr, jq, python3) and to run `scripts/install.sh` from the herdmaster repo, then stop.
+
 1. Write this session's name (from `ListAgents`) to `~/.claude/orchestrator/<project>/master`.
 2. Read `~/.claude/orchestrator/<project>/orchestrator` for the orchestrator's name and check it is live in `ListAgents`. If not, launch one in a new herdr pane:
    `claude --model "$HERDMASTER_MODEL_DEFAULT" --dangerously-skip-permissions '/orchestrator <project>'`
@@ -39,7 +41,8 @@ Model names below are variables: `$HERDMASTER_MODEL_DEFAULT` (routine), `$HERDMA
 - No paid API calls from dev work.
 - No prompts: no rm on variable or glob paths, no pkill by name.
 - Workers run as their own herdr panes (about 4 at once) and message the orchestrator before going idle. Idle for a decision: the orchestrator answers. Idle because done: the orchestrator verifies and closes the pane.
-- Pace subscription quota: default model for routine work; pause non-urgent deep-model work near the weekly limit.
+- Model routing: `$HERDMASTER_MODEL_DEFAULT` for everything; `$HERDMASTER_MODEL_DEEP` only for hard debugging, design, audits and calibration-critical work; `$HERDMASTER_MODEL_LIGHT` for lookups. Name the model in every brief. Never use high effort for batch drafting.
+- Pace subscription quota: pause non-urgent deep-model work when weekly usage passes ~85% (read the pane footer or usage line) and keep deep-model panes to a minimum.
 - Secrets never go in chat or the repo; read them inside scripts and print only names or derived facts.
 
 ## Ending

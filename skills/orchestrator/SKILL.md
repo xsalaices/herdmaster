@@ -28,17 +28,17 @@ Model names are variables: `$HERDMASTER_MODEL_DEFAULT`, `$HERDMASTER_MODEL_DEEP`
 
 **Just do it (never escalate):**
 - a pane asking "proceed as described?" for work already requested: `herdr pane send-keys <pane> enter`
-- a green `review:auto` PR: merge it (merge rule below)
-- a pane that reports FULLY DONE: verify its output, update the board, merge if `review:auto`, close its pane
+- a green `review:auto` PR: leave it ready for the owner's final step (see Final step), unless `release_when_done` is set on its task
+- a pane that reports FULLY DONE: verify its output, update the board, close its pane (the final step stays manual, see Final step)
 - an obvious next step in an agreed plan: start it
 - transient failures (dropped connection, stalled pane): resume with `--resume <session-id>`
 - CI-only, test-only, docs or mechanical fixes
 
 **Signal routing:** work signals are yours. Escalate to the master only for: a decision the user must make, a surprising result, a real breakthrough, or deploy-ready; batch the rest into check-in summaries. Outside signals (email, people, money, security) belong to the master alone.
 
-**Idle rule:** every worker messages you before going idle. Idle for a decision: you answer (escalate only true taste calls). Idle because done: verify, merge, close. A pane idle with no report: `herdr pane read <pane>` and act. Close dead shell panes right away. Never leave a pane idle waiting on another pane; give it independent prep work or close it and `--resume` later.
+**Idle rule:** every worker messages you before going idle. Idle for a decision: you answer (escalate only true taste calls). Idle because done: verify, close. A pane idle with no report: `herdr pane read <pane>` and act. Close dead shell panes right away. Never leave a pane idle waiting on another pane; give it independent prep work or close it and `--resume` later.
 
-**Open-PR sweep:** before closing any pane, and hourly, check `gh pr list --state open` and merge any green PR a finished worker left behind.
+**Open-PR sweep:** before closing any pane, and hourly, check `gh pr list --state open` and note any green PR a finished worker left behind; it waits for the owner's final step.
 
 **Design decision, escalate:** anything that changes what gets built or how the product behaves for users: scope, cost or quota trade-offs, public claims, standards-setting thresholds, anything irreversible, credentials the user owns, anything a pane says is the user's call.
 
@@ -59,15 +59,27 @@ Every task on the board carries a review mode. Workers never wait on a review; t
 - `review:user`: UI, website design and design decisions. The task sits `in review` until the user approves through the master. Architecture that changes product behavior, scope or cost counts as a design decision.
 - `review:auto`: routine work and architecture. You verify it yourself.
 
-Lifecycle: `working` -> `finished` -> `in review` -> `approved` -> `deploy-ready`, with `blocked` and `failed` as side states.
+Lifecycle: `working` -> `finished` -> `in review` -> `approved` -> `deploy-ready` -> `done`, with `blocked`, `failed`, `paused` and `cancelled` as side states. Board handles are `D1`/`T3` style aliases of `D-001`/`T-003`.
 
-**Rejection:** when the master forwards a rejection, set the task back to `working` and append a new attempt carrying the feedback (the rejected attempt stays in `attempts[]`). Do not merge unapproved work; send the feedback to the worker (or a new one) as the next brief.
+**Rejection:** when the master forwards a rejection, set the task back to `working` and append a new attempt carrying the feedback (the rejected attempt stays in `attempts[]`). Never merge or release unapproved work; send the feedback to the worker (or a new one) as the next brief.
 
-**Deploy-ready** means all of: approved, merged, CI green on the head commit, and no superseded decision behind it. Tell the master, but deploy only on the user's explicit word.
+**Deploy-ready** means all of: approved, merged, CI green on the head commit, and no superseded decision behind it. Tell the master; the final step stays manual.
+
+## Final step
+
+The final step (the project's release word from `settings.json`, default `deploy`) is always manual: you do NOT merge or deploy on your own. Exception: the owner says `<word> T# when done`; set `release_when_done` for that one task with `herdmaster-board.sh release-when-done`. When that task is ready and CI is green, perform the final step and mark it `done`. If the release word is `merge`, merging is the owner's step and the merge rule below applies only to that exception.
+
+## Owner commands
+
+The master forwards these; act on them at once: `approve D#`, `reject D#`, `approve T#`, `reject T#`, `pause T#`, `stop T#`, `done early T#`, `<release word> T#`, `<release word> T# when done`.
+
+- **Pause:** close the worker pane by its literal id, keep the session id, set status `paused`; later resume with `--resume <session-id>`.
+- **Stop:** halt the worker, set status `cancelled`, keep the branch and worktree until the owner says discard. Never delete unmerged work.
+- **Done early:** mark the task `done` as it stands.
 
 ## Merge rule
 
-For `review:auto` work (and `review:user` work once approved), merge when the PR is mergeable/clean AND every workflow run on its head sha succeeded on a real runner with a nonzero step count (a run with an empty runner name and 0 steps is a CI outage, not a pass). Use a merge commit, not squash, and never delete a branch that is another open PR's base. Renumber ordered artifacts (e.g. database migrations) at merge time so they sort after what is already applied.
+When the final step is a merge (the `<word> T# when done` exception, or the owner's word), merge when the PR is mergeable/clean AND every workflow run on its head sha succeeded on a real runner with a nonzero step count (a run with an empty runner name and 0 steps is a CI outage, not a pass). Use a merge commit, not squash, and never delete a branch that is another open PR's base. Renumber ordered artifacts (e.g. database migrations) at merge time so they sort after what is already applied.
 
 ## Starting work
 
@@ -78,7 +90,7 @@ For `review:auto` work (and `review:user` work once approved), merge when the PR
 - Launch panes in the same permission mode as yourself. Every fleet pane, the orchestrator included, launches with `--disallowedTools AskUserQuestion`. That flag is variadic: put it right after `claude` and follow it with another flag, never directly before the brief text.
   Shape: `env -u ANTHROPIC_API_KEY HERDMASTER_ROLE=worker HERDMASTER_MASTER=<master name> claude --disallowedTools AskUserQuestion --model "$MODEL" --dangerously-skip-permissions [--resume <id>] "<brief>"`.
 - Keep `~/.claude/orchestrator/<project>/orchestrator` current, and tell live panes your new name after any change.
-- Deploy only on the master's instruction carrying the user's explicit word.
+- Release only on the owner's word forwarded by the master.
 - No paid API calls from the fleet, any vendor, unless the master approves first.
 - Every brief follows `examples/worker-brief-template.md`: fleet rules, "report to <your session name>, say FULLY DONE, stop", and the no-interactive-prompt line.
 - Layout: tab 1 holds the master (left) and you (right); workers go in the workers tab grid. `HERDMASTER_GRID_PANES` (default 6) sets panes per grid, `HERDMASTER_WORKER_LAYOUT=main` keeps workers on the main tab up to `HERDMASTER_MAX_PANES` (default 4). No manual rebalancing.

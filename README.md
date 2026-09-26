@@ -2,7 +2,7 @@
 
 A planner + orchestrator setup for Claude Code.
 
-You talk plans and design decisions in one window (the **master**). A background **orchestrator** session runs everything else: it launches **worker** panes in herdr, answers routine prompts, merges green PRs and closes finished panes. You are interrupted only when a real decision needs you.
+You talk plans and design decisions in one window (the **master**). A background **orchestrator** session runs everything else: it launches **worker** panes in herdr, answers routine prompts, closes finished panes. You are interrupted only when a real decision needs you.
 
 ## Why
 
@@ -32,7 +32,7 @@ Parallel Claude Code windows turn into a full-time job: approving prompts, watch
 ## Roles and message flow
 
 - **Master**: holds the conversation, runs decision rounds, dispatches settled work as briefs. Never executes long work.
-- **Orchestrator**: owns worker panes, PRs, merges and routine prompts. Logs to `~/.claude/orchestrator/<project>/status.md`.
+- **Orchestrator**: owns worker panes, PRs and routine prompts. Logs to `~/.claude/orchestrator/<project>/status.md`.
 - **Workers**: one task per pane in its own worktree; message the orchestrator before going idle.
 
 Shared state lives in `~/.claude/orchestrator/<project>/` (`master`, `orchestrator`, `tasks.json`, `status.md`). The `master` and `orchestrator` files hold each session's current name so messages never go to a dead session.
@@ -47,7 +47,7 @@ Shared state lives in `~/.claude/orchestrator/<project>/` (`master`, `orchestrat
 
 ## Board and layout
 
-- **Board** (`tasks.json`): tasks and decisions with lifecycle, review mode (`review:user` for UI, website design and design decisions; `review:auto` for routine work and architecture), attempts and dependencies. The orchestrator is the only writer, through `bin/herdmaster-board.sh`; viewers are read-only. See [docs/design/board.md](docs/design/board.md).
+- **Board** (`tasks.json`): tasks and decisions with lifecycle, review mode (`review:user` for UI, website design and design decisions; `review:auto` for routine work and architecture), attempts and dependencies. The orchestrator is the only writer, through `bin/herdmaster-board.sh`; viewers are read-only. See [docs/design/board.md](docs/design/board.md). The final step is always manual unless you say `<word> T# when done`.
 - **Layout** (`bin/herdmaster-layout.sh new-worker`): planner left and orchestrator right on tab 1, workers as an even grid on a workers tab. Tune with `HERDMASTER_GRID_PANES`, `HERDMASTER_WORKER_LAYOUT` and `HERDMASTER_MAX_PANES`.
 - **Pane identity**: launched panes get `HERDMASTER_ROLE` and `HERDMASTER_MASTER`; `/herdmaster` refuses to run in a fleet pane.
 

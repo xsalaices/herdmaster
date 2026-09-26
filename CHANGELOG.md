@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Skills: the final step (merge or deploy) is always manual; `<word> T# when done` releases one task, and the planner forwards approve, reject, pause, stop and done early commands.
 - Skills: the orchestrator keeps a `tasks.json` board (replacing `design-queue.md` and `decisions.md`) with review modes, a rejection flow and deploy-ready rules; the planner shows a board count line and refuses to run in a fleet pane.
 - README: documents the board, the pane layout and pane identity.
 - The master skill is now invoked as `/herdmaster` (the state file and role are still called `master`).

@@ -29,6 +29,8 @@ Top level: `schema_version` and `entries[]`. Viewers ignore unknown fields.
 | `status` | See lifecycles below |
 | `review` | `auto` or `user` |
 | `depends_on` | List of entry ids |
+| `note` | Optional one or two lines of context shown under the title |
+| `recommend` | Optional, for decisions: the planner's recommended answer and why |
 | `attempts[]` | Each: `status`, `feedback`, PR or pane link |
 | `created`, `updated` | ISO 8601 timestamps |
 

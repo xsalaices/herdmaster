@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Reads and writes ~/.claude/orchestrator/<project>/tasks.json (see docs/design/board.md).
-# Usage: herdmaster-board.sh add <task|decision> <title> [--review auto|user] [--depends ID,ID]
+# Usage: herdmaster-board.sh add <task|decision> <title> [--review auto|user] [--depends ID,ID] [--note TEXT] [--recommend TEXT]
 #        herdmaster-board.sh status <id> <state>
 #        herdmaster-board.sh attempt <id> <status> [feedback] [link]
 #        herdmaster-board.sh supersede <id>
@@ -44,7 +44,7 @@ valid_state() {
 }
 
 cmd_add() {
-  local kind=${1:-} title=${2:-} review="" deps=""
+  local kind=${1:-} title=${2:-} review="" deps="" note="" rec=""
   [[ $kind == task || $kind == decision ]] || die "add: kind must be task or decision"
   [[ -n $title ]] || die "add: title required"
   shift 2
@@ -52,6 +52,8 @@ cmd_add() {
     case $1 in
       --review) review=${2:-}; shift 2 ;;
       --depends) deps=${2:-}; shift 2 ;;
+      --note) note=${2:-}; shift 2 ;;
+      --recommend) rec=${2:-}; shift 2 ;;
       *) die "add: unknown argument $1" ;;
     esac
   done
@@ -65,13 +67,15 @@ cmd_add() {
   jq -e --argjson d "$dep_json" '. as $b | $d | all(. as $x | $b.entries | any(.id == $x))' <<<"$board" >/dev/null \
     || die "add: --depends names an unknown id"
   local out
-  out=$(jq --arg kind "$kind" --arg title "$title" --arg review "$review" --argjson deps "$dep_json" --arg ts "$(now)" '
+  out=$(jq --arg kind "$kind" --arg title "$title" --arg review "$review" --argjson deps "$dep_json" --arg note "$note" --arg rec "$rec" --arg ts "$(now)" '
     (if $kind == "task" then "T" else "D" end) as $p
     | ([.entries[] | select(.id | startswith($p + "-")) | .id[2:] | tonumber] | (max // 0) + 1) as $n
     | ($p + "-" + ("000" + ($n | tostring) | .[-3:])) as $id
     | .entries += [{id: $id, kind: $kind, title: $title,
         status: (if $kind == "task" then "working" else "open" end),
-        review: $review, depends_on: $deps, attempts: [], created: $ts, updated: $ts}]
+        review: $review, depends_on: $deps, attempts: [], created: $ts, updated: $ts}
+        + (if $note != "" then {note: $note} else {} end)
+        + (if $rec != "" then {recommend: $rec} else {} end)]
     | {board: ., id: $id}' <<<"$board")
   save "$(jq .board <<<"$out")"
   jq -r .id <<<"$out"

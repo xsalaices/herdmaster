@@ -24,6 +24,10 @@ eq "$(jq -r '.entries[] | select(.id == "D-001") | .status' "$f")" superseded
 eq "$(jq -r '.entries[] | select(.id == "T-001") | .flags[0]' "$f")" "superseded:D-001"
 eq "$(jq -r '.entries[] | select(.id == "T-002") | .flags // "none"' "$f")" none
 
+n=$("$B" add decision "Pick one" --note "Because X" --recommend "Yes, because Y")
+eq "$(jq -r --arg n "$n" '.entries[] | select(.id == $n) | .note + "|" + .recommend' "$f")" "Because X|Yes, because Y"
+"$B" status "$n" settled
+
 first=$("$B" count)
 [[ $first == "Board: 1 in review (oldest 0m), 1 flagged" ]] || { echo "FAIL: count '$first'" >&2; exit 1; }
 eq "$("$B" count)" ""

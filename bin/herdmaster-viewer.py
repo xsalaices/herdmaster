@@ -18,8 +18,9 @@ PAGE = r"""<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Herdmaster board</title>
 <style>
-:root{--bg:#f6f5f2;--card:#fff;--ink:#1c1b19;--mute:#6f6c66;--line:#e4e1da;--review:#2d5be3;--work:#8a867d;--ready:#1f7a4d;--fail:#b3261e;--ask:#b25e09}
-@media (prefers-color-scheme:dark){:root{--bg:#141413;--card:#1d1d1b;--ink:#ecebe7;--mute:#948f86;--line:#2e2d2a;--review:#8fa8ff;--work:#948f86;--ready:#63cf98;--fail:#f28b82;--ask:#e8a558}}
+:root{color-scheme:light;--bg:#f6f5f2;--card:#fff;--ink:#1c1b19;--mute:#6f6c66;--line:#e4e1da;--review:#2d5be3;--work:#8a867d;--ready:#1f7a4d;--fail:#b3261e;--ask:#b25e09}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){color-scheme:dark;--bg:#141413;--card:#1d1d1b;--ink:#ecebe7;--mute:#948f86;--line:#2e2d2a;--review:#8fa8ff;--work:#948f86;--ready:#63cf98;--fail:#f28b82;--ask:#e8a558}}
+:root[data-theme=dark]{color-scheme:dark;--bg:#141413;--card:#1d1d1b;--ink:#ecebe7;--mute:#948f86;--line:#2e2d2a;--review:#8fa8ff;--work:#948f86;--ready:#63cf98;--fail:#f28b82;--ask:#e8a558}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
 main{max-width:1000px;margin:0 auto;padding:24px 16px 48px}
@@ -54,8 +55,27 @@ summary::-webkit-details-marker{display:none}
 summary::before{content:"\25B8";display:inline-block;width:1.2em;transition:transform .15s}
 details[open] summary::before{transform:rotate(90deg)}
 .row.past{opacity:.75}
+.more{font:13px ui-monospace,Menlo,monospace;color:var(--mute);background:none;border:1px solid var(--line);border-radius:6px;padding:4px 10px;margin-top:2px;cursor:pointer}
+.more:hover{color:var(--ink);border-color:var(--mute)}
 #note{font-size:13px;color:var(--fail);margin-bottom:16px}
+header{display:flex;align-items:center;justify-content:space-between;margin:0 0 12px}
+h1{font-size:14px;font-weight:600;letter-spacing:.02em;margin:0;color:var(--mute)}
+#cog{display:flex;background:none;border:0;border-radius:6px;padding:6px;color:var(--mute);cursor:pointer}
+#cog:hover,#cog[aria-expanded=true]{color:var(--ink)}
+#cog svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+#panel{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:4px 14px 10px;margin:0 0 20px}
+#panel h3{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:14px 0 6px;font-weight:700}
+.set{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:14px;min-height:36px}
+.set>.k{flex:1;min-width:0}
+.set .v{font:13px ui-monospace,Menlo,monospace;overflow-wrap:anywhere;text-align:right}
+.set .v.none{color:var(--mute)}
+.set button{flex:none;font:12px ui-monospace,Menlo,monospace;color:var(--mute);background:none;border:1px solid var(--line);border-radius:6px;padding:2px 8px;cursor:pointer}
+.set button:hover{color:var(--ink);border-color:var(--mute)}
+.set select{font:inherit;font-size:14px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:4px 6px;max-width:55%}
+.hint{color:var(--mute);font-size:13px;margin:6px 0 0}
 </style></head><body><main>
+<header><h1>Herdmaster</h1><button id="cog" type="button" aria-label="Settings" aria-expanded="false" aria-controls="panel" title="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg></button></header>
+<div id="panel" hidden></div>
 <nav id="tabs" role="tablist" hidden></nav>
 <div id="note"></div>
 <div id="board"></div>
@@ -66,7 +86,16 @@ const $=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=nul
 const STATUS={"in review":["review","In review"],"finished":["review","In review"],"working":["working","Working"],"blocked":["working","Working"],"approved":["working","Working"],"paused":["working","Paused"],"deploy-ready":["ready",null],"failed":["failed","Failed"]};
 const ORDER=["review","failed","working","ready"];
 const short=id=>(id||"").replace(/-0*/,"");
-let ctx={suffix:"",word:"deploy"},pastOpen=false;
+let ctx={suffix:"",word:"deploy",settings:{}},pastOpen=false,showAll=false;
+const KEYS=["release","grid_panes","worker_layout","max_panes"];
+const prefs={theme:"auto",done:10,tab:""};
+try{const s=JSON.parse(localStorage.getItem("hm-prefs")||"{}");
+  if(["auto","light","dark"].includes(s.theme))prefs.theme=s.theme;
+  if(Number.isInteger(s.done)&&s.done>0)prefs.done=s.done;
+  if(typeof s.tab==="string")prefs.tab=s.tab}catch(_){}
+function setPref(k,v){prefs[k]=v;try{localStorage.setItem("hm-prefs",JSON.stringify(prefs))}catch(_){}applyTheme()}
+function applyTheme(){const r=document.documentElement;if(prefs.theme==="auto")r.removeAttribute("data-theme");else r.dataset.theme=prefs.theme}
+applyTheme();
 function copy(text,btn){
   const done=()=>{const o=btn.textContent;btn.textContent="copied";setTimeout(()=>{btn.textContent=o},1000)};
   const cmd=text+ctx.suffix;
@@ -107,10 +136,33 @@ function render(b){
   past.sort((x,y)=>String(y.updated||"").localeCompare(String(x.updated||"")));
   const d=$("details"),s=$("summary","","Done");s.append(" ",$("span","n",past.length));d.append(s);d.open=pastOpen;
   d.ontoggle=()=>{pastOpen=d.open};
-  past.slice(0,10).forEach(e=>d.append(row(e,"working",e.status==="cancelled"?"cancelled":"done",null,true)));
+  past.slice(0,showAll?past.length:prefs.done).forEach(e=>d.append(row(e,"working",e.status==="cancelled"?"cancelled":"done",null,true)));
+  if(past.length>prefs.done){const m=$("button","more",showAll?"show fewer":"show all "+past.length);m.type="button";m.onclick=()=>{showAll=!showAll;last="";tick()};d.append(m)}
   pe.replaceChildren(d);
 }
-let last="",tabs=[],fixed=true,cur=null,picked=false;
+let last="",lastPanel="",tabs=[],fixed=true,cur=null,picked=false;
+function sel(opts,val,onchange){
+  const s=$("select");opts.forEach(([v,l])=>{const o=$("option","",l);o.value=v;o.selected=String(v)===val;s.append(o)});
+  s.onchange=()=>onchange(s.value);return s;
+}
+function setRow(label,ctl){const r=$("div","set");r.append($("span","k",label),ctl);return r}
+function renderPanel(){
+  const key=JSON.stringify([ctx.settings,tabs.map(p=>p.name),fixed,ctx.suffix]);
+  if(key===lastPanel)return;lastPanel=key;
+  const p=document.getElementById("panel");
+  const pf=$("h3","","This browser");
+  const rows=[setRow("Theme",sel([["auto","Auto"],["light","Light"],["dark","Dark"]],prefs.theme,v=>setPref("theme",v))),
+    setRow("Done items shown",sel([5,10,25,50].map(n=>[n,n]),String(prefs.done),v=>{setPref("done",+v);last="";tick()}))];
+  if(!fixed&&tabs.length>1)rows.push(setRow("Opens first",sel([["","Most decisions needed"],...tabs.map(t=>[t.name,t.name])],prefs.tab,v=>setPref("tab",v))));
+  const sh=$("h3","","Project settings"+(ctx.suffix?" "+ctx.suffix.trim():""));
+  const sr=KEYS.map(k=>{
+    const v=ctx.settings[k],has=v!==undefined&&v!==null;
+    const b=$("button","","copy command");b.type="button";b.onclick=()=>copy("set "+k+" "+(has?v:"<value>"),b);
+    const val=$("span","v"+(has?"":" none"),has?(typeof v==="object"?JSON.stringify(v):String(v)):"default");
+    const r=$("div","set");r.append($("span","k",k),val,b);return r;
+  });
+  p.replaceChildren(pf,...rows,sh,...sr,$("p","hint","Read-only. Copy a command and give it to the planner."));
+}
 function renderTabs(){
   const nav=document.getElementById("tabs");
   nav.hidden=fixed;if(fixed)return;
@@ -127,7 +179,7 @@ async function tick(){
     const pj=await pr.json();
     fixed=pj.fixed;tabs=pj.projects;
     if(!tabs.some(p=>p.name===cur))picked=false;
-    if(!picked)cur=tabs.reduce((m,p)=>!m||p.needed>m.needed?p:m,null)?.name||null;
+    if(!picked)cur=tabs.find(p=>p.name===prefs.tab)?.name||tabs.reduce((m,p)=>!m||p.needed>m.needed?p:m,null)?.name||null;
     ctx.suffix=!fixed&&tabs.length>1?" ("+cur+")":"";
     renderTabs();
     if(cur===null&&!fixed){note.textContent="No boards yet.";document.getElementById("board").replaceChildren();document.getElementById("past").replaceChildren();return}
@@ -137,19 +189,21 @@ async function tick(){
     if(!r.ok){let m="Board unavailable";try{m=JSON.parse(txt).error||m}catch(_){}
       note.textContent=m;return}
     let b;try{b=JSON.parse(txt)}catch(_){note.textContent="Board file is not valid JSON. Showing the last good view.";return}
-    try{ctx.word=(await sr.json()).release||"deploy"}catch(_){ctx.word="deploy"}
+    try{const st=await sr.json();ctx.settings=st&&typeof st==="object"&&!Array.isArray(st)?st:{}}catch(_){ctx.settings={}}
+    ctx.word=["merge","deploy","push","ship"].includes(ctx.settings.release)?ctx.settings.release:"deploy";
+    renderPanel();
     note.textContent="";
-    const key=cur+"\n"+ctx.word+"\n"+ctx.suffix+"\n"+txt;
+    const key=cur+"\n"+ctx.word+"\n"+ctx.suffix+"\n"+prefs.done+"\n"+showAll+"\n"+txt;
     if(key!==last){last=key;render(b)}
   }catch(_){note.textContent="Viewer server unreachable. Retrying."}
 }
+document.getElementById("cog").onclick=e=>{const p=document.getElementById("panel");p.hidden=!p.hidden;e.currentTarget.setAttribute("aria-expanded",!p.hidden)};
 tick();setInterval(tick,3000);
 </script></body></html>
 """
 
 
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
-RELEASE_WORDS = ("merge", "deploy", "push", "ship")
 
 
 def read_json(path):
@@ -178,12 +232,12 @@ def list_projects(root):
     return out
 
 
-def release_word(root, project):
+def project_settings(root, project):
     try:
-        w = read_json(os.path.join(root, project, "settings.json")).get("release")
-    except (OSError, ValueError, AttributeError):
-        return "deploy"
-    return w if w in RELEASE_WORDS else "deploy"
+        doc = read_json(os.path.join(root, project, "settings.json"))
+    except (OSError, ValueError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
 
 
 def make_handler(fixed, root):
@@ -225,7 +279,7 @@ def make_handler(fixed, root):
             elif route == "/settings.json":
                 project = self._project(u.query)
                 if project:
-                    self._send(200, json.dumps({"release": release_word(root, project)}), "application/json")
+                    self._send(200, json.dumps(project_settings(root, project)), "application/json")
             elif route == "/tasks.json":
                 project = self._project(u.query)
                 if not project:

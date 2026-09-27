@@ -67,6 +67,21 @@ eq "$(jq -r --arg g "$g1" '.entries[] | select(.id == $g) | .answer' "$f")" "B, 
 "$B" status "$n" superseded "nope" 2>/dev/null && { echo "FAIL: answer on non-settle" >&2; exit 1; }
 eq "$(jq '.entries | length' "$f")" 6
 
+p=$("$B" add decision "Pick font" --note "Body text" --option "A|Serif" --option "B|Sans")
+"$B" settle "$p" --answer C 2>/dev/null && { echo "FAIL: settle with unknown key" >&2; exit 1; }
+"$B" settle "$p" 2>/dev/null && { echo "FAIL: settle without --answer" >&2; exit 1; }
+"$B" settle "$t1" --answer A 2>/dev/null && { echo "FAIL: settle on task" >&2; exit 1; }
+"$B" settle D-999 --answer A 2>/dev/null && { echo "FAIL: settle unknown id" >&2; exit 1; }
+eq "$(jq -r --arg p "$p" '.entries[] | select(.id == $p) | .status' "$f")" open
+"$B" settle "$p" --answer B
+eq "$(jq -c --arg p "$p" '.entries[] | select(.id == $p) | [.status, .answer, .note]' "$f")" '["settled","Sans","Body text\nAnswer: Sans"]'
+"$B" settle "$p" --answer A 2>/dev/null && { echo "FAIL: settle twice" >&2; exit 1; }
+eq "$(jq -r --arg p "$p" '.entries[] | select(.id == $p) | .answer' "$f")" Sans
+q=$("$B" add decision "Pick size" --option "A|Small" --option "B|Large")
+"$B" settle "$q" --answer A
+eq "$(jq -c --arg q "$q" '.entries[] | select(.id == $q) | [.status, .answer, has("note")]' "$f")" '["settled","Small",false]'
+eq "$(jq '.entries | length' "$f")" 8
+
 r=$("$B" add task "Review me")
 "$B" set-review "$r" --summary "Adds a panel" --diff "main..feat" --tests "12 passed" --preview "http://127.0.0.1:5173/" --screenshot /private/tmp/claude-501/a.png --screenshot /private/tmp/claude-501/b.png --link "Docs|https://example.com/d" --link "PR|https://example.com/pr/1"
 rv() { jq -c --arg r "$r" ".entries[] | select(.id == \$r) | .review_pack | $1" "$f"; }

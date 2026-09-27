@@ -10,6 +10,7 @@ import errno
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -50,6 +51,15 @@ h2 .n{font-weight:600}
 .opt.best .k{color:var(--bg);background:var(--ask)}
 .opt .star{flex:none;align-self:center;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ask);border:1px solid var(--ask);border-radius:999px;padding:1px 8px}
 @media (max-width:560px){.opt{flex-wrap:wrap}.opt .star{order:3;margin-left:calc(1.7em + 22px)}}
+.row a,.qb a{color:var(--review);overflow-wrap:anywhere}
+.rv{flex-basis:100%;display:flex;flex-direction:column;gap:6px;font-size:14px}
+.rvs{overflow-wrap:anywhere}
+.rvl{display:flex;flex-wrap:wrap;gap:4px 14px;font-weight:600}
+.rvi{display:flex;flex-wrap:wrap;gap:8px}
+.rvi a{display:block;line-height:0;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.rvi img{width:96px;height:64px;object-fit:cover;object-position:top;background:var(--bg)}
+.rvm{color:var(--mute);font-size:13px;overflow-wrap:anywhere}
+.rvm b{font-weight:600}
 .wait{flex-basis:100%;font-size:13px;color:var(--ask)}
 .wait b{font:600 12.5px ui-monospace,Menlo,monospace}
 .tk{background:var(--card);border:1px solid var(--line);border-radius:8px;margin-bottom:8px;overflow:hidden}
@@ -154,8 +164,55 @@ function setPref(k,v){prefs[k]=v;try{localStorage.setItem("hm-prefs",JSON.string
 function applyTheme(){const r=document.documentElement;if(prefs.theme==="auto")r.removeAttribute("data-theme");else r.dataset.theme=prefs.theme}
 applyTheme();
 let waiting=new Map();
+const URL_RE=/https?:\/\/[^\s<>"'`]+/g;
+function safeUrl(u){
+  if(typeof u!=="string")return null;
+  try{const x=new URL(u);return x.protocol==="http:"||x.protocol==="https:"?x.href:null}catch(_){return null}
+}
+function linkParts(text){
+  const out=[];let at=0;text=String(text);
+  for(const m of text.matchAll(URL_RE)){
+    let u=m[0];
+    while(/[.,;:!?)\]}]$/.test(u)&&!(u.endsWith(")")&&u.includes("(")))u=u.slice(0,-1);
+    const href=safeUrl(u);
+    if(!href)continue;
+    if(m.index>at)out.push({t:text.slice(at,m.index)});
+    out.push({t:u,href});at=m.index+u.length;
+  }
+  if(at<text.length)out.push({t:text.slice(at)});
+  return out;
+}
+function anchor(href,label){
+  const a=$("a","",label);a.href=href;a.target="_blank";a.rel="noopener noreferrer";return a;
+}
+function linkify(el,text){
+  linkParts(text).forEach(p=>el.append(p.href?anchor(p.href,p.t):document.createTextNode(p.t)));
+  return el;
+}
+const fileUrl=p=>"/file?path="+encodeURIComponent(p);
+const IMG_RE=/\.(png|jpe?g|gif|webp)$/i;
+function reviewBlock(pack){
+  if(!pack||typeof pack!=="object"||Array.isArray(pack))return null;
+  const d=$("div","rv");
+  if(typeof pack.summary==="string"&&pack.summary)d.append(linkify($("div","rvs"),pack.summary));
+  const ls=$("div","rvl"),pv=safeUrl(pack.preview_url);
+  if(pv)ls.append(anchor(pv,"Preview"));
+  (Array.isArray(pack.links)?pack.links:[]).forEach(l=>{
+    const h=l&&safeUrl(l.url);if(h)ls.append(anchor(h,typeof l.label==="string"&&l.label?l.label:h))});
+  if(ls.childNodes.length)d.append(ls);
+  const shots=(Array.isArray(pack.screenshots)?pack.screenshots:[]).filter(p=>typeof p==="string"&&p.startsWith("/")&&IMG_RE.test(p));
+  if(shots.length){
+    const g=$("div","rvi");
+    shots.forEach((p,i)=>{const a=anchor(fileUrl(p),"");a.title="Screenshot "+(i+1);
+      const im=$("img");im.src=fileUrl(p);im.alt="Screenshot "+(i+1);im.loading="lazy";a.append(im);g.append(a)});
+    d.append(g);
+  }
+  const meta=[["Diff",pack.diff],["Tests",pack.tests]].filter(([,v])=>typeof v==="string"&&v);
+  if(meta.length){const m=$("div","rvm");meta.forEach(([k,v])=>{const x=$("div");x.append($("b","",k+": "),v);m.append(x)});d.append(m)}
+  return d.childNodes.length?d:null;
+}
 function addNote(r,e){
-  const n=$("div","note",e.note);r.append(n);
+  const n=linkify($("div","note"),e.note);r.append(n);
   const open=openNotes.has(e.id);if(!open)n.classList.add("clamp");
   const b=$("button","exp",open?"Show less":"Show more");b.type="button";b.setAttribute("aria-expanded",open);b.hidden=!open;
   b.onclick=()=>{if(openNotes.has(e.id))openNotes.delete(e.id);else openNotes.add(e.id);last="";paint()};r.append(b);
@@ -176,6 +233,7 @@ function row(e,cls,label,past){
   const r=$("div","row "+cls+(past?" past":""));r.append($("span","tag",short(e.id)),$("span","t",e.title||"(untitled)"));
   if((e.flags||[]).length)r.append($("span","warn","a question changed"));
   if(label)r.append($("span","pill",label));
+  if(e.status==="in review"&&!past){const rv=reviewBlock(e.review_pack);if(rv)r.append(rv)}
   const w=waiting.get(e.id);
   if(w){const x=$("div","wait","waiting on ");w.forEach((id,i)=>{if(i)x.append(", ");x.append($("b","",short(id)))});r.append(x)}
   if(e.note)addNote(r,e);
@@ -401,6 +459,64 @@ def all_boards(fixed, root):
             "settings": {n: project_settings(root, n) for n in names}}
 
 
+FILE_ROOTS = ("/private/tmp/claude-501", "~/.claude")
+FILE_MAX = 10 * 1024 * 1024
+FILE_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp",
+              "txt": "text/plain; charset=utf-8", "md": "text/plain; charset=utf-8", "log": "text/plain; charset=utf-8",
+              "json": "text/plain; charset=utf-8", "diff": "text/plain; charset=utf-8", "patch": "text/plain; charset=utf-8"}
+IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp"}
+FILE_DENY = {"secrets"}
+
+
+class FileError(Exception):
+    def __init__(self, code, msg):
+        self.code, self.msg = code, msg
+
+
+def open_review_file(raw):
+    """Validates a requested path and returns (fd, ext, size); raises FileError. Callers must close the fd.
+    Ceiling: realpath and open are two steps, so a directory swapped for a symlink in between could escape; roots are owner-writable only."""
+    if not raw or len(raw) > 4096:
+        raise FileError(400, "Missing or too long path")
+    if "\0" in raw:
+        raise FileError(400, "Invalid path")
+    if not raw.startswith("/"):
+        raise FileError(400, "Path must be absolute")
+    if ".." in raw or os.path.normpath(raw) != raw:
+        raise FileError(400, "Path must be normalised without '..'")
+    real = os.path.realpath(raw)
+    rel = None
+    for r in FILE_ROOTS:
+        root = os.path.realpath(os.path.expanduser(r))
+        if real.startswith(root + os.sep):
+            rel = real[len(root) + 1:]
+            break
+    if rel is None:
+        raise FileError(403, "Outside the allowed folders")
+    parts = rel.split(os.sep)
+    if any(x.startswith(".") or x in FILE_DENY for x in parts):
+        raise FileError(403, "Hidden or protected path")
+    ext = os.path.splitext(real)[1][1:].lower()
+    if ext not in FILE_TYPES:
+        raise FileError(415, "File type not allowed")
+    try:
+        fd = os.open(real, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        raise FileError(404, "Not found")
+    except OSError:
+        raise FileError(403, "Cannot open")
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise FileError(400, "Not a regular file")
+        if st.st_size > FILE_MAX:
+            raise FileError(413, "File too large")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd, ext, st.st_size
+
+
 HERDR_BIN = os.environ.get("HERDR_BIN", "herdr")
 _focus = {"at": float("-inf"),"workspace": None}
 
@@ -444,6 +560,28 @@ def make_handler(fixed, root):
         def _json_error(self, code, msg):
             self._send(code, json.dumps({"error": msg}), "application/json")
 
+        def _file(self, q):
+            vals = q.get("path") or []
+            try:
+                if len(vals) != 1:
+                    raise FileError(400, "Exactly one path is required")
+                fd, ext, size = open_review_file(vals[0])
+            except FileError as e:
+                return self._json_error(e.code, e.msg)
+            with os.fdopen(fd, "rb") as f:
+                data = f.read(FILE_MAX + 1)
+            if len(data) > FILE_MAX:
+                return self._json_error(413, "File too large")
+            self.send_response(200)
+            self.send_header("Content-Type", FILE_TYPES[ext])
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+            self.send_header("Content-Disposition", "inline" if ext in IMAGE_EXTS else "attachment")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+
         def _project(self, query):
             if fixed:
                 return fixed
@@ -471,6 +609,8 @@ def make_handler(fixed, root):
             elif route == "/focus.json":
                 ws = focused_workspace()
                 self._send(200, json.dumps({"project": focused_project(root, ws), "workspace": ws}), "application/json")
+            elif route == "/file":
+                self._file(parse_qs(u.query, keep_blank_values=True))
             elif route == "/settings.json":
                 project = self._project(u.query)
                 if project:

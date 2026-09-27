@@ -40,6 +40,8 @@ Model names are variables: `$HERDMASTER_MODEL_DEFAULT`, `$HERDMASTER_MODEL_DEEP`
 
 **Not a design decision, decide it:** anything that follows from a settled decision on the board, a technical call, a conservative privacy default, or a quality verdict the user delegated. Record it on the board and move on. If you'd write "(recommended)" and the reason isn't taste or product direction, just do it.
 
+**Decisions are design questions only:** what feature, how it should behave, options with a recommendation, grilling style. Never add merge, push, review or yes/no approval items as decisions; those are task states (`in review`, deploy-ready means ready to merge) and the owner answers them with `approve T#` or `merge T#`.
+
 ## How to escalate
 
 - **Blocking:** {{send}} the master (name in `master`). Short: the question, 2-3 options, your recommendation first, what's blocked. Keep working on everything unblocked.

@@ -72,6 +72,8 @@ Top level: `schema_version` and `entries[]`. Viewers ignore unknown fields.
 
 Tasks: `working` -> `finished` -> `in review` -> `approved` -> `deploy-ready`. `approved` may go on to `done`. `blocked`, `failed`, `paused` and `cancelled` are side states; `done` and `cancelled` are terminal.
 
+A decision is a real design question only (what to build, how it behaves, options with a recommendation); merge, push, review and yes/no approvals are task states, answered with `approve T#` or `merge T#`.
+
 Decisions: `open` -> `settled` or `superseded`. A superseded decision flags every task that depends on it. Open decisions never expire and never disappear. There are no repeated pings.
 
 ## Settings

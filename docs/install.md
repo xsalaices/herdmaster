@@ -43,12 +43,15 @@ Per-project keys in `~/.claude/orchestrator/<project>/settings.json` (set with `
 | `grid_panes`, `max_panes` | positive integer | override the env vars above |
 | `worker_layout` | `tab`, `main` | overrides `HERDMASTER_WORKER_LAYOUT` |
 | `herdr_workspace` | herdr workspace id | recorded by `new-orchestrator`; lets the viewer follow the focused workspace (toggle "Follow herdr" in its settings cog) |
+| `notify` | `on`, `off` | default `on`; `off` silences the decision notifications for this project |
 | `agent` | adapter name (`claude`) | terminal agent for fleet panes launched with `herdmaster-layout.sh ... --tier`; default `claude` |
 | `agent_planner`, `agent_orchestrator`, `agent_worker` | adapter name | per-role override of `agent` |
 
 ## 4. Use
 
 In your project's repo, run `/herdmaster`. Workers are briefed from `examples/worker-brief-template.md`.
+
+Decision notifications: the `notify` launchd job runs `herdmaster-notify.sh` every 10 s and sends one macOS notification per new open decision on any board (each id once; ids kept in `.notified` beside `tasks.json`). Decisions already open when the job first starts are not announced. It also refreshes the herdr workspace label with the open-decision count for projects that have `herdr_workspace`. Logs: `$HERDMASTER_HOME/logs/notify.err.log`.
 
 Optional board viewer: `python3 "$HERDMASTER_HOME/bin/herdmaster-viewer.py" --project <name>` serves a read-only page at `http://127.0.0.1:8765/` (change with `HERDMASTER_VIEWER_PORT`). It binds localhost only, answers GET only, and polls `tasks.json` every 3s.
 

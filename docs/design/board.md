@@ -13,7 +13,7 @@ Scope: design only. Skill wording changes, the viewer and any native app are sep
 | Path | `~/.claude/orchestrator/<project>/tasks.json` |
 | Writer | The orchestrator only |
 | Writes | Atomic: write a temp file, then `mv` over `tasks.json` |
-| Readers | Viewers, read-only |
+| Readers | Viewers; they never write `tasks.json` |
 | Planner input | The planner sends new tasks, user answers, rejections and approvals to the orchestrator by message |
 | Replaces | `design-queue.md` and `decisions.md`; `status.md` stays as the running log |
 
@@ -81,6 +81,8 @@ Review pack: `herdmaster-board.sh set-review <task id> [--summary S] [--diff D] 
 The viewer serves screenshots through the read-only `GET /file?path=<absolute path>` route, which re-validates every request: the path must be absolute and contain no `..`, NUL byte or non-normalised segment (400); the realpath, with symlinks followed, must sit under `/private/tmp/claude-501` or `~/.claude/orchestrator/<project>/review/` (403); no path component below the root may start with `.` or be named `secrets`, compared NFKC and case-folded (403); the extension must be png, jpg, jpeg, gif, webp, txt, md, log, diff or patch (415); it must be a regular file, not a directory (400), opened with `O_NOFOLLOW` and at most 10 MB (413); a missing file is 404; other methods are 405. Responses carry a fixed `Content-Type` (text types are `text/plain`), `X-Content-Type-Options: nosniff` and a `default-src 'none'; sandbox` CSP; only images are `Content-Disposition: inline`, text is `attachment`. A `Sec-Fetch-Site` header other than `same-origin` or `none` is refused (403). Every route rejects a `Host` header other than `127.0.0.1:<port>` or `localhost:<port>` (DNS rebinding), every response carries `X-Content-Type-Options: nosniff`, the page carries a CSP that allows only its own inline script and style, same-origin images and fetches, and requests time out after 5 seconds of silence.
 
 The viewer header reads "N of M answered" (settled over open plus settled; superseded questions are left out). A ticket opens by default when it holds an open question and is collapsed otherwise. Each question row shows its title and the recommended answer (the recommended option, else `recommend`) and expands to the options and note; a settled question shows its `answer`, or "Settled" when none was recorded. A task whose `depends_on` names an open decision shows "waiting on D7" (the short handle of `D-007`).
+
+Answering from the page: an open question with `options` shows one button per option, except options whose text starts with merge, deploy or push, which stay chat-only like open-ended questions. A click asks "Confirm answer B?" and only Yes sends `POST /answer` with body `{"project","id","key"}`. The server checks, in order: Host (403), exactly one Content-Length of at most 4096 bytes (400, 413), `Content-Type: application/json` (415), the `X-Herdmaster-Token` header against a per-start token compared in constant time (403), the body read capped at 4096 bytes (413), JSON with exactly those three string fields (400), then that the project exists (and matches `--project` if set), the id is an open decision, the key is one of its options and that option's text does not start with merge, deploy or push (400). Only then does it append `{"project","id","key","at"}` as one line to `<project>/answers.jsonl` (mode 0600); it never touches `tasks.json`. Each start writes a fresh `secrets.token_urlsafe(32)` to `~/.claude/herdmaster/viewer-token` (0600) and embeds it in the page; no GET route returns it and no route sends CORS headers. The orchestrator settles each line with `herdmaster-board.sh settle <id> --answer <key>`, which sets the answer to that option's text and appends `Answer: <text>` to the note, then moves the line to `answers.done.jsonl`.
 
 ## Lifecycles
 
@@ -163,7 +165,7 @@ Launched panes get `HERDMASTER_ROLE` (`orchestrator` or `worker`) and `HERDMASTE
 
 ## Viewers
 
-Localhost page first: python3, bound to 127.0.0.1 only, read-only, reads `tasks.json`. A native app wrapping the same board comes later. Building either is out of scope.
+Localhost page first: python3, bound to 127.0.0.1 only, reads `tasks.json` and never writes it. A native app wrapping the same board comes later. Building either is out of scope.
 
 ## Legacy import
 

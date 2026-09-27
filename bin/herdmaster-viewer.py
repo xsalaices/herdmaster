@@ -39,6 +39,17 @@ h2 .n{font-weight:600}
 .row{flex-wrap:wrap}
 .note{flex-basis:100%;color:var(--mute);font-size:14px}
 .rec{flex-basis:100%;font-size:14px;color:var(--ask)}
+.note.clamp{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden}
+.exp{flex-basis:100%;text-align:left;background:none;border:0;padding:0;font:inherit;font-size:13px;color:var(--review);cursor:pointer}
+.exp:hover{text-decoration:underline}
+.opts{flex-basis:100%;list-style:none;margin:6px 0 2px;padding:0;display:flex;flex-direction:column;gap:8px}
+.opt{display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px}
+.opt .k{flex:none;min-width:1.7em;text-align:center;font:700 13px/1.5 ui-monospace,Menlo,monospace;border-radius:6px;padding:0 6px;color:var(--review);background:color-mix(in srgb,var(--review) 14%,transparent)}
+.opt .x{flex:1;min-width:0;font-size:15px;overflow-wrap:anywhere}
+.opt.best{border-color:var(--ask);background:color-mix(in srgb,var(--ask) 9%,transparent)}
+.opt.best .k{color:var(--bg);background:var(--ask)}
+.opt .star{flex:none;align-self:center;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ask);border:1px solid var(--ask);border-radius:999px;padding:1px 8px}
+@media (max-width:560px){.opt{flex-wrap:wrap}.opt .star{order:3;margin-left:calc(1.7em + 22px)}}
 .warn{color:var(--fail);font-size:13px;margin-left:8px}
 .ask{--c:var(--ask)}.review{--c:var(--review)}.working{--c:var(--work)}.ready{--c:var(--ready)}.failed{--c:var(--fail)}
 .empty{color:var(--mute);padding:12px 2px}
@@ -101,6 +112,7 @@ const $=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=nul
 const STATUS={"in review":["review","In review"],"finished":["review","In review"],"working":["working","Working"],"blocked":["working","Working"],"approved":["working","Working"],"paused":["working","Paused"],"deploy-ready":["ready",null],"failed":["failed","Failed"]};
 const ORDER=["review","failed","working","ready"];
 const short=id=>(id||"").replace(/-0*/,"");
+const openNotes=new Set();
 let ctx={suffix:"",word:"deploy",settings:{}},pastOpen=false,showAll=false;
 const KEYS=["release","grid_panes","worker_layout","max_panes","herdr_workspace"];
 const prefs={theme:"auto",done:10,tab:"",follow:true};
@@ -116,8 +128,22 @@ function row(e,cls,label,past){
   const r=$("div","row "+cls+(past?" past":""));r.append($("span","tag",short(e.id)),$("span","t",e.title||"(untitled)"));
   if((e.flags||[]).length)r.append($("span","warn","a decision changed"));
   if(label)r.append($("span","pill",label));
-  if(e.note)r.append($("div","note",e.note));
-  if(e.recommend)r.append($("div","rec","Recommended: "+e.recommend));
+  const os=Array.isArray(e.options)?e.options.filter(o=>o&&typeof o.key==="string"&&typeof o.text==="string"):[];
+  if(e.note){
+    const n=$("div","note",e.note);r.append(n);
+    if(os.length&&e.note.length>120){
+      const open=openNotes.has(e.id);if(!open)n.classList.add("clamp");
+      const b=$("button","exp",open?"Show less":"Show more");b.type="button";b.setAttribute("aria-expanded",open);
+      b.onclick=()=>{if(openNotes.has(e.id))openNotes.delete(e.id);else openNotes.add(e.id);last="";tick()};r.append(b);
+    }
+  }
+  if(os.length){
+    const ul=$("ul","opts");
+    os.forEach(o=>{const li=$("li","opt"+(o.recommended===true?" best":""));li.append($("span","k",o.key),$("span","x",o.text));
+      if(o.recommended===true)li.append($("span","star","Recommended"));ul.append(li)});
+    r.append(ul);
+  }
+  if(e.recommend)r.append($("div","rec",(os.length?"Why: ":"Recommended: ")+e.recommend));
   return r;
 }
 function section(title,rows,none){

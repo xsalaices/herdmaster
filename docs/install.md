@@ -55,6 +55,8 @@ Decision notifications: the `notify` launchd job runs `herdmaster-notify.sh` eve
 
 Optional board viewer: `python3 "$HERDMASTER_HOME/bin/herdmaster-viewer.py" --project <name>` serves a read-only page at `http://127.0.0.1:8765/` (change with `HERDMASTER_VIEWER_PORT`). It binds localhost only, answers GET only, and polls `tasks.json` every 3s.
 
+Adopting pre-existing panes: if panes were opened by hand before `/herdmaster` set up the master/orchestrator pair, `herdmaster-layout.sh [--dry-run] adopt --master <pane-id> --orchestrator <pane-id> [--workspace <id>]` moves every other pane on the master's tab into the standard workers layout (same grid rules as `new-worker`), keeping a pane's existing label if it already looks like a task title and otherwise renaming it `adopted <pane-id>`. It never touches the master or orchestrator pane, or panes in other workspaces. This is a one-time cleanup you run yourself; it is not part of `/herdmaster` startup.
+
 ## Uninstall
 
 ```sh

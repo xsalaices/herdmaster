@@ -86,4 +86,85 @@ printf '{"worker_layout":"main"}\n' > "$so"
 out=$("$L" --dry-run new-worker build echo hi 2>&1)
 has "$out" "pane split"
 rm -f -- "$so"
+unset HERDMASTER_PROJECT
+
+# adopt: fake herdr that answers pane get/layout by pane id (unlike the canned fixture above,
+# which ignores its arguments) so each candidate pane can carry its own label.
+lacks() { grep -qF -- "$2" <<<"$1" && { echo "FAIL: unexpected '$2' in:" >&2; echo "$1" >&2; exit 1; }; return 0; }
+cat > "$T/herdr-adopt" <<'FAKE3'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "pane get")
+    case "$3" in
+      pane-m) echo '{"result":{"pane":{"pane_id":"pane-m","tab_id":"tab-1","label":"master"}}}' ;;
+      pane-o) echo '{"result":{"pane":{"pane_id":"pane-o","tab_id":"tab-1","label":"orchestrator"}}}' ;;
+      pane-c1) echo '{"result":{"pane":{"pane_id":"pane-c1","tab_id":"tab-1","label":"Fix the parser bug"}}}' ;;
+      pane-c2) echo '{"result":{"pane":{"pane_id":"pane-c2","tab_id":"tab-1","label":""}}}' ;;
+      pane-c3) echo '{"result":{"pane":{"pane_id":"pane-c3","tab_id":"tab-1","label":"pane-c3"}}}' ;;
+      *) echo "UNKNOWN GET: $3" >&2; exit 98 ;;
+    esac ;;
+  "pane layout")
+    if [[ $4 == "pane-m" ]]; then
+      echo '{"result":{"layout":{"area":{"width":200,"height":60},"panes":[
+        {"pane_id":"pane-m","rect":{"x":0,"y":0,"width":50,"height":60}},
+        {"pane_id":"pane-o","rect":{"x":51,"y":0,"width":50,"height":60}},
+        {"pane_id":"pane-c1","rect":{"x":102,"y":0,"width":49,"height":30}},
+        {"pane_id":"pane-c2","rect":{"x":102,"y":31,"width":49,"height":29}},
+        {"pane_id":"pane-c3","rect":{"x":152,"y":0,"width":48,"height":60}}],
+        "splits":[]}}}'
+    elif [[ $4 == "pane-a" ]]; then
+      echo '{"result":{"layout":{"area":{"width":200,"height":60},"panes":[
+        {"pane_id":"pane-a","rect":{"x":0,"y":0,"width":150,"height":60}},
+        {"pane_id":"pane-b","rect":{"x":151,"y":0,"width":49,"height":60}}],
+        "splits":[{"direction":"right","ratio":0.75,"rect":{"x":0,"y":0,"width":200,"height":60}}]}}}'
+    else
+      echo "UNKNOWN LAYOUT: $*" >&2; exit 97
+    fi ;;
+  "tab list") echo "{\"result\":{\"tabs\":$FAKE_TABS}}" ;;
+  "pane list") jq -nc --argjson n "${FAKE_MAIN_PANES:-2}" '{result:{panes:([range($n)|{pane_id:"pane-\(.)",tab_id:"tab-1"}]+[{pane_id:"pane-a",tab_id:"tab-2"}])}}' ;;
+  *) echo "MUTATION: $*" >&2; exit 99 ;;
+esac
+FAKE3
+chmod +x "$T/herdr-adopt"
+
+# Same fixture (workers tab, pane_count 3, room to spare) that earlier made new-worker choose
+# "pane-a --direction right" -- adopt must land its candidates on the exact same slot.
+export FAKE_TABS='[{"tab_id":"tab-2","workspace_id":"ws-1","label":"workers","pane_count":3}]'
+out=$(HERDMASTER_HERDR="$T/herdr-adopt" "$L" --dry-run adopt --workspace ws-1 --master pane-m --orchestrator pane-o 2>&1)
+has "$out" "pane move pane-c1 --tab tab-2 --split right --target-pane pane-a --no-focus"
+has "$out" "pane move pane-c2 --tab tab-2 --split right --target-pane pane-a --no-focus"
+has "$out" "pane move pane-c3 --tab tab-2 --split right --target-pane pane-a --no-focus"
+[[ $(grep -c "pane move" <<<"$out") -eq 3 ]] || { echo "FAIL: expected exactly 3 moves: $out" >&2; exit 1; }
+has "$out" "pane-c1 -> <new-pane> (Fix the parser bug)"        # task-title label kept, no rename
+has "$out" "pane rename <new-pane> adopted pane-c2"            # empty label -> adopted <id>
+has "$out" "pane rename <new-pane> adopted pane-c3"            # label == own pane id -> adopted <id>
+[[ $(grep -c "pane rename" <<<"$out") -eq 2 ]] || { echo "FAIL: expected exactly 2 renames: $out" >&2; exit 1; }
+has "$out" "adopted 3 pane(s)"
+for id in pane-m pane-o; do
+  lacks "$out" "pane move $id "
+  lacks "$out" "pane rename $id "
+  lacks "$out" "pane close $id"
+done
+
+# No existing workers tab and an explicit --workspace other than any pane's own: falls back to
+# the same "new workers tab" decision new-worker makes when none exists, via pane move --new-tab.
+export FAKE_TABS='[]'
+out=$(HERDMASTER_HERDR="$T/herdr-adopt" "$L" --dry-run adopt --workspace ws-9 --master pane-m --orchestrator pane-o 2>&1)
+has "$out" "pane move pane-c1 --new-tab --workspace ws-9 --no-focus"
+has "$out" "tab rename <new-tab> workers"
+
+# Missing --master/--orchestrator must fail before any herdr call (fake exits 99 on unhandled
+# commands, so a non-2 exit would mean the check ran late).
+set +e
+out=$(HERDMASTER_HERDR="$T/herdr-adopt" "$L" --dry-run adopt --orchestrator pane-o 2>&1); rc=$?
+set -e
+[[ $rc -eq 2 ]] || { echo "FAIL: missing --master should exit 2, got $rc: $out" >&2; exit 1; }
+has "$out" "--master is required"
+
+set +e
+out=$(HERDMASTER_HERDR="$T/herdr-adopt" "$L" --dry-run adopt --master pane-m 2>&1); rc=$?
+set -e
+[[ $rc -eq 2 ]] || { echo "FAIL: missing --orchestrator should exit 2, got $rc: $out" >&2; exit 1; }
+has "$out" "--orchestrator is required"
+
 echo ok

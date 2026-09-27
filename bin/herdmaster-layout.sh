@@ -3,6 +3,8 @@
 # Usage: herdmaster-layout.sh [--dry-run] new-worker <label> <launch>   prints the new pane id
 #        herdmaster-layout.sh [--dry-run] new-orchestrator <launch>    splits the current pane right, labels it orchestrator, records the herdr workspace in settings, prints the new pane id
 #        herdmaster-layout.sh [--dry-run] rebalance [pane]             equal widths for the tab of pane (default: current)
+#        herdmaster-layout.sh [--dry-run] adopt [--workspace <id>] --master <pane-id> --orchestrator <pane-id>
+#                                                                      moves every other pane on that workspace's tab 1 into the worker layout
 # <launch> is either <command...>, or --tier <light|default|deep> [--resume <id>] [prompt] to build it with herdmaster-agent.sh.
 # Per-project settings.json (worker_layout, grid_panes, max_panes) overrides the env vars below.
 # Env: HERDMASTER_WORKER_LAYOUT (tab|main, default tab), HERDMASTER_GRID_PANES (default 6),
@@ -64,31 +66,46 @@ launch_cmd() {
   if [[ $1 == --tier ]]; then "$(dirname "$0")/herdmaster-agent.sh" command "$role" "${@:2}"; else printf '%q ' "$@"; fi
 }
 
+# Decides where the next worker pane belongs: a split within an existing tab, or a new
+# "workers" tab. Shared by new-worker (which creates the pane) and adopt (which moves one in).
+# main_tab is the tab holding the master/orchestrator, consulted only when LAYOUT=main.
+# Echoes "split\t<target-pane>\t<direction>\t<tab-id>" or "newtab\t<label>" (tab-separated:
+# a "workers N" label must survive intact through the caller's read).
+worker_slot() {
+  local ws=$1 main_tab=$2
+  if [[ $LAYOUT == main ]] && (( $(tab_panes "$main_tab" "$ws" | wc -l) - FIXED_PANES < MAXP )); then
+    read -r target dir < <(split_target "$main_tab" "$ws")
+    printf 'split\t%s\t%s\t%s\n' "$target" "$dir" "$main_tab"
+    return
+  fi
+  local wtab
+  wtab=$("$HERDR" tab list | jq -r --arg ws "$ws" --argjson g "$GRID" '
+    [.result.tabs[] | select(.workspace_id == $ws and (.label | test("^workers( [0-9]+)?$")) and .pane_count < $g)]
+    | (last // empty) | .tab_id')
+  if [[ -n $wtab ]]; then
+    read -r target dir < <(split_target "$wtab" "$ws")
+    printf 'split\t%s\t%s\t%s\n' "$target" "$dir" "$wtab"
+  else
+    local n tlabel=workers
+    n=$("$HERDR" tab list | jq --arg ws "$ws" '[.result.tabs[] | select(.workspace_id == $ws and (.label | test("^workers( [0-9]+)?$")))] | length')
+    (( n > 0 )) && tlabel="workers $((n + 1))"
+    printf 'newtab\t%s\n' "$tlabel"
+  fi
+}
+
 cmd_new_worker() {
   local label=${1:-}; shift || true
   [[ -n $label && $# -gt 0 ]] || die "new-worker: <label> <launch> required"
-  local cur ws tab pane="" dir cmd
+  local cur ws tab pane="" cmd slot kind a b c
   cmd=$(launch_cmd worker "$@")
   cur=$(current_pane_json); ws=$(jq -r .workspace_id <<<"$cur"); tab=$(jq -r .tab_id <<<"$cur")
 
-  if [[ $LAYOUT == main ]] && (( $(tab_panes "$tab" "$ws" | wc -l) - FIXED_PANES < MAXP )); then
-    read -r target dir < <(split_target "$tab" "$ws")
-    pane=$(mut_json .result.pane.pane_id "<new-pane>" pane split "$target" --direction "$dir" --no-focus)
-  else
-    local wtab
-    wtab=$("$HERDR" tab list | jq -r --arg ws "$ws" --argjson g "$GRID" '
-      [.result.tabs[] | select(.workspace_id == $ws and (.label | test("^workers( [0-9]+)?$")) and .pane_count < $g)]
-      | (last // empty) | .tab_id')
-    if [[ -n $wtab ]]; then
-      read -r target dir < <(split_target "$wtab" "$ws")
-      pane=$(mut_json .result.pane.pane_id "<new-pane>" pane split "$target" --direction "$dir" --no-focus)
-    else
-      local n tlabel=workers
-      n=$("$HERDR" tab list | jq --arg ws "$ws" '[.result.tabs[] | select(.workspace_id == $ws and (.label | test("^workers( [0-9]+)?$")))] | length')
-      (( n > 0 )) && tlabel="workers $((n + 1))"
-      pane=$(mut_json .result.root_pane.pane_id "<new-pane>" tab create --workspace "$ws" --label "$tlabel" --no-focus)
-    fi
-  fi
+  slot=$(worker_slot "$ws" "$tab")
+  IFS=$'\t' read -r kind a b c <<<"$slot"
+  case $kind in
+    split) pane=$(mut_json .result.pane.pane_id "<new-pane>" pane split "$a" --direction "$b" --no-focus) ;;
+    newtab) pane=$(mut_json .result.root_pane.pane_id "<new-pane>" tab create --workspace "$ws" --label "$a" --no-focus) ;;
+  esac
 
   local master; master=$(master_name)
   mut pane rename "$pane" "$label" >&2
@@ -106,6 +123,74 @@ cmd_new_orchestrator() {
   mut pane run "$pane" "HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=$(printf '%q' "$master") $cmd" >&2
   record_workspace >&2
   echo "$pane"
+}
+
+# A label a worker pane was never deliberately given: empty, the pane's own id, or the
+# generic default a fresh agent pane starts with.
+is_default_label() {
+  local label=$1 pane_id=$2
+  [[ -z $label || $label == "$pane_id" || $label == "Claude Code" ]]
+}
+
+# Moves a pane into a brand-new "workers" tab and labels the tab to match (pane move --new-tab
+# has no --tab-label; the tab starts unlabeled, so we rename it after, mirroring tab create).
+newtab_move() {
+  local old=$1 ws=$2 tlabel=$3
+  if (( DRY )); then
+    echo "[dry-run] $HERDR pane move $old --new-tab --workspace $ws --no-focus" >&2
+    echo "[dry-run] $HERDR tab rename <new-tab> $tlabel" >&2
+    echo "<new-pane>"
+    return
+  fi
+  local resp newpane newtab
+  resp=$("$HERDR" pane move "$old" --new-tab --workspace "$ws" --no-focus)
+  newpane=$(jq -r .result.move_result.pane.pane_id <<<"$resp")
+  newtab=$(jq -r .result.move_result.pane.tab_id <<<"$resp")
+  "$HERDR" tab rename "$newtab" "$tlabel" >&2
+  echo "$newpane"
+}
+
+# Re-homes every pre-existing pane on --master's tab (other than --master and --orchestrator)
+# into the standard worker layout, using the same placement logic as new-worker.
+cmd_adopt() {
+  local ws="" master="" orchestrator=""
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --workspace) ws=${2:-}; shift 2 ;;
+      --master) master=${2:-}; shift 2 ;;
+      --orchestrator) orchestrator=${2:-}; shift 2 ;;
+      *) die "adopt: unknown argument $1" ;;
+    esac
+  done
+  [[ -n $master ]] || die "adopt: --master is required"
+  [[ -n $orchestrator ]] || die "adopt: --orchestrator is required"
+  [[ -n $ws ]] || ws=$(current_pane_json | jq -r .workspace_id)
+
+  local main_tab panes
+  main_tab=$("$HERDR" pane get "$master" | jq -r .result.pane.tab_id)
+  panes=$("$HERDR" pane layout --pane "$master" | jq -r '.result.layout.panes[].pane_id')
+
+  local moved=0 pane
+  while IFS= read -r pane; do
+    [[ -n $pane && $pane != "$master" && $pane != "$orchestrator" ]] || continue
+    local label newlabel slot kind a b c newpane
+    label=$("$HERDR" pane get "$pane" | jq -r '.result.pane.label // ""')
+    newlabel=$label
+    is_default_label "$label" "$pane" && newlabel="adopted $pane"
+
+    slot=$(worker_slot "$ws" "$main_tab")
+    IFS=$'\t' read -r kind a b c <<<"$slot"
+    case $kind in
+      split) newpane=$(mut_json .result.move_result.pane.pane_id "<new-pane>" pane move "$pane" --tab "$c" --split "$b" --target-pane "$a" --no-focus) ;;
+      newtab) newpane=$(newtab_move "$pane" "$ws" "$a") ;;
+    esac
+
+    [[ $newlabel == "$label" ]] || mut pane rename "$newpane" "$newlabel" >&2
+    echo "$pane -> $newpane ($newlabel)"
+    moved=$((moved + 1))
+  done <<<"$panes"
+
+  echo "adopted $moved pane(s)"
 }
 
 # Lets the viewer follow the focused herdr workspace (see docs/design/board.md).
@@ -160,6 +245,7 @@ sub=${1:-}; shift || true
 case $sub in
   new-worker) cmd_new_worker "$@" ;;
   new-orchestrator) cmd_new_orchestrator "$@" ;;
+  adopt) cmd_adopt "$@" ;;
   rebalance) cmd_rebalance "$@" ;;
   *) sed -n '2,10p' "$0"; exit 2 ;;
 esac

@@ -57,6 +57,8 @@ Optional board viewer: `python3 "$HERDMASTER_HOME/bin/herdmaster-viewer.py" --pr
 
 Adopting pre-existing panes: if panes were opened by hand before `/herdmaster` set up the master/orchestrator pair, `herdmaster-layout.sh [--dry-run] adopt --master <pane-id> --orchestrator <pane-id> [--workspace <id>]` moves every other pane on the master's tab into the standard workers layout (same grid rules as `new-worker`), keeping a pane's existing label if it already looks like a task title and otherwise renaming it `adopted <pane-id>`. It never touches the master or orchestrator pane, or panes in other workspaces. This is a one-time cleanup you run yourself; it is not part of `/herdmaster` startup.
 
+Launching a pane into a specific directory: `herdmaster-layout.sh new-worker "<task title>" --cwd <dir> <command...>` (and `new-orchestrator --cwd <dir> <command...>`) makes the pane `cd` into `<dir>` before running `<command...>`; it composes with `--tier`. Without `--cwd`, behavior is unchanged. If you need more than a single `cd` first (e.g. exporting extra env vars), pass `bash -lc "cd <dir> && exec claude ..."` as the command instead -- that fallback is intentional, not a workaround.
+
 ## Uninstall
 
 ```sh

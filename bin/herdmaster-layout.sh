@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Places worker panes and keeps the grid even.
-# Usage: herdmaster-layout.sh [--dry-run] new-worker <label> <launch>   prints the new pane id
-#        herdmaster-layout.sh [--dry-run] new-orchestrator <launch>    splits the current pane right, labels it orchestrator, records the herdr workspace in settings, prints the new pane id
+# Usage: herdmaster-layout.sh [--dry-run] new-worker <label> [--cwd <dir>] <launch>   prints the new pane id
+#        herdmaster-layout.sh [--dry-run] new-orchestrator [--cwd <dir>] <launch>    splits the current pane right, labels it orchestrator, records the herdr workspace in settings, prints the new pane id
 #        herdmaster-layout.sh [--dry-run] rebalance [pane]             equal widths for the tab of pane (default: current)
 #        herdmaster-layout.sh [--dry-run] adopt [--workspace <id>] --master <pane-id> --orchestrator <pane-id>
 #                                                                      moves every other pane on that workspace's tab 1 into the worker layout
 # <launch> is either <command...>, or --tier <light|default|deep> [--resume <id>] [prompt] to build it with herdmaster-agent.sh.
+# --cwd <dir> makes the pane cd into <dir> before running <launch> (works with either launch form); without it, behavior is unchanged.
 # Per-project settings.json (worker_layout, grid_panes, max_panes) overrides the env vars below.
 # Env: HERDMASTER_WORKER_LAYOUT (tab|main, default tab), HERDMASTER_GRID_PANES (default 6),
 #      HERDMASTER_MAX_PANES (default 4, workers on the main tab when layout is main), HERDMASTER_PROJECT.
@@ -96,8 +97,12 @@ worker_slot() {
 cmd_new_worker() {
   local label=${1:-}; shift || true
   [[ -n $label && $# -gt 0 ]] || die "new-worker: <label> <launch> required"
+  local cwd=""
+  [[ ${1:-} == --cwd ]] && { cwd=${2:-}; [[ -n $cwd ]] || die "new-worker: --cwd requires a directory"; shift 2; }
+  [[ $# -gt 0 ]] || die "new-worker: <launch> required"
   local cur ws tab pane="" cmd slot kind a b c
   cmd=$(launch_cmd worker "$@")
+  [[ -n $cwd ]] && cmd="cd $(printf '%q' "$cwd") && $cmd"
   cur=$(current_pane_json); ws=$(jq -r .workspace_id <<<"$cur"); tab=$(jq -r .tab_id <<<"$cur")
 
   slot=$(worker_slot "$ws" "$tab")
@@ -116,8 +121,12 @@ cmd_new_worker() {
 
 cmd_new_orchestrator() {
   [[ $# -gt 0 ]] || die "new-orchestrator: <launch> required"
+  local cwd=""
+  [[ ${1:-} == --cwd ]] && { cwd=${2:-}; [[ -n $cwd ]] || die "new-orchestrator: --cwd requires a directory"; shift 2; }
+  [[ $# -gt 0 ]] || die "new-orchestrator: <launch> required"
   local pane master cmd; master=$(master_name)
   cmd=$(launch_cmd orchestrator "$@")
+  [[ -n $cwd ]] && cmd="cd $(printf '%q' "$cwd") && $cmd"
   pane=$(mut_json .result.pane.pane_id "<new-pane>" pane split --current --direction right --no-focus)
   mut pane rename "$pane" orchestrator >&2
   mut pane run "$pane" "HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=$(printf '%q' "$master") $cmd" >&2

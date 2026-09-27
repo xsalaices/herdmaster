@@ -24,6 +24,7 @@ FAKE
 chmod +x "$T/herdr"
 export HERDMASTER_HERDR="$T/herdr"
 has() { grep -qF -- "$2" <<<"$1" || { echo "FAIL: missing '$2' in:" >&2; echo "$1" >&2; exit 1; }; }
+lacks() { grep -qF -- "$2" <<<"$1" && { echo "FAIL: unexpected '$2' in:" >&2; echo "$1" >&2; exit 1; }; return 0; }
 
 export FAKE_TABS='[{"tab_id":"tab-1","workspace_id":"ws-1","label":"1","pane_count":2}]'
 out=$("$L" --dry-run new-worker build echo hi 2>&1)
@@ -31,6 +32,15 @@ has "$out" "tab create --workspace ws-1 --label workers"
 has "$out" "pane rename <new-pane> build"
 has "$out" "HERDMASTER_ROLE=worker HERDMASTER_MASTER=planner-1 echo hi"
 has "$out" "pane resize --pane pane-b --direction left --amount 0.2500"
+
+export FAKE_TABS='[{"tab_id":"tab-1","workspace_id":"ws-1","label":"1","pane_count":2}]'
+out=$("$L" --dry-run new-worker build --cwd "/tmp/my project" echo hi 2>&1)
+has "$out" 'cd /tmp/my\ project && echo hi'
+out=$("$L" --dry-run new-worker build --cwd /tmp/work --tier default '/orchestrator demo' 2>&1)
+has "$out" 'cd /tmp/work && env -u ANTHROPIC_API_KEY claude'
+has "$out" '/orchestrator\ demo'
+out=$("$L" --dry-run new-worker build echo hi 2>&1)
+lacks "$out" "cd /tmp"
 
 export FAKE_TABS='[{"tab_id":"tab-2","workspace_id":"ws-1","label":"workers","pane_count":3}]'
 out=$("$L" --dry-run new-worker build echo hi 2>&1)
@@ -52,6 +62,9 @@ out=$("$L" --dry-run new-orchestrator claude hi 2>&1)
 has "$out" "pane split --current --direction right --no-focus"
 has "$out" "pane rename <new-pane> orchestrator"
 has "$out" "HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=planner-1 claude hi"
+
+out=$("$L" --dry-run new-orchestrator --cwd /tmp/work claude hi 2>&1)
+has "$out" "cd /tmp/work && claude hi"
 
 has "$("$L" --dry-run new-orchestrator claude hi 2>&1)" "settings set herdr_workspace ws-1"
 [[ ! -f $T/.claude/orchestrator/demo/settings.json ]] || { echo "FAIL: dry-run wrote settings" >&2; exit 1; }
@@ -90,7 +103,6 @@ unset HERDMASTER_PROJECT
 
 # adopt: fake herdr that answers pane get/layout by pane id (unlike the canned fixture above,
 # which ignores its arguments) so each candidate pane can carry its own label.
-lacks() { grep -qF -- "$2" <<<"$1" && { echo "FAIL: unexpected '$2' in:" >&2; echo "$1" >&2; exit 1; }; return 0; }
 cat > "$T/herdr-adopt" <<'FAKE3'
 #!/usr/bin/env bash
 case "$1 $2" in

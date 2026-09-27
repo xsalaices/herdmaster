@@ -69,7 +69,8 @@ for a in lookup worker deep; do
 done
 
 # 4. launchd jobs from templates
-jobs=(cpu-reaper pressure-check)
+jobs=(cpu-reaper pressure-check viewer)
+VIEWER_PORT=${HERDMASTER_VIEWER_PORT:-8766}
 (( WATCHER )) && jobs+=(blocked-pane-watcher)
 run mkdir -p "$LA_DIR"
 for j in "${jobs[@]}"; do
@@ -78,7 +79,7 @@ for j in "${jobs[@]}"; do
   if (( DRY )); then
     say "[dry-run] render $tmpl -> $out"
   else
-    sed -e "s|__HERDMASTER_HOME__|$HERDMASTER_HOME|g" -e "s|__HOME__|$HOME|g" "$tmpl" > "$out"
+    sed -e "s|__HERDMASTER_HOME__|$HERDMASTER_HOME|g" -e "s|__HOME__|$HOME|g" -e "s|__VIEWER_PORT__|$VIEWER_PORT|g" "$tmpl" > "$out"
     plutil -lint "$out" >/dev/null
     launchctl bootout "gui/$(id -u)/com.herdmaster.$j" 2>/dev/null || true
     launchctl bootstrap "gui/$(id -u)" "$out"

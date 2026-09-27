@@ -23,7 +23,7 @@ case $HERDMASTER_HOME in "$CLAUDE_DIR"/?*) ;; *) echo "HERDMASTER_HOME must be i
 
 run() { if (( DRY )); then echo "[dry-run] $*"; else "$@"; fi; }
 
-for j in cpu-reaper pressure-check blocked-pane-watcher; do
+for j in cpu-reaper pressure-check viewer blocked-pane-watcher; do
   p="$LA_DIR/com.herdmaster.$j.plist"
   [[ -f $p ]] || continue
   run launchctl bootout "gui/$(id -u)/com.herdmaster.$j" || true

@@ -53,6 +53,11 @@ has "$out" "pane split --current --direction right --no-focus"
 has "$out" "pane rename <new-pane> orchestrator"
 has "$out" "HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=planner-1 claude hi"
 
+out=$("$L" --dry-run new-orchestrator claude "/orchestrator my proj" "it's a \"brief\"" 2>&1)
+line=$(grep -F "pane run" <<<"$out")
+eval "argv=(${line#*HERDMASTER_MASTER=planner-1 })"
+[[ ${#argv[@]} -eq 3 && ${argv[1]} == "/orchestrator my proj" && ${argv[2]} == "it's a \"brief\"" ]] || { echo "FAIL: quoting: $line" >&2; exit 1; }
+
 out=$("$L" --dry-run rebalance 2>&1)
 has "$out" "pane resize --pane pane-b --direction left"
 

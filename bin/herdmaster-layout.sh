@@ -84,7 +84,7 @@ cmd_new_worker() {
 
   local master; master=$(master_name)
   mut pane rename "$pane" "$label" >&2
-  mut pane run "$pane" "HERDMASTER_ROLE=worker HERDMASTER_MASTER=$(printf '%q' "$master") $*" >&2
+  mut pane run "$pane" "HERDMASTER_ROLE=worker HERDMASTER_MASTER=$(printf '%q' "$master") $(printf '%q ' "$@")" >&2
   if (( DRY )); then cmd_rebalance >&2; else cmd_rebalance "$pane" >&2; fi
   echo "$pane"
 }
@@ -94,7 +94,7 @@ cmd_new_orchestrator() {
   local pane master; master=$(master_name)
   pane=$(mut_json .result.pane.pane_id "<new-pane>" pane split --current --direction right --no-focus)
   mut pane rename "$pane" orchestrator >&2
-  mut pane run "$pane" "HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=$(printf '%q' "$master") $*" >&2
+  mut pane run "$pane" "HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=$(printf '%q' "$master") $(printf '%q ' "$@")" >&2
   echo "$pane"
 }
 

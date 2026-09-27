@@ -6,6 +6,7 @@
 #        herdmaster-board.sh set-review <task id> [--summary S] [--diff D] [--tests T] [--preview URL] [--screenshot PATH]... [--link "label|url"]...
 #        herdmaster-board.sh set-options <id> --option "A|text" [--option "B|text"] [--recommend-key K]
 #        herdmaster-board.sh status <id> <state> [answer]     (answer only when settling a decision)
+#        herdmaster-board.sh settle <id> --answer <key>       (open decision; answer = that option's text)
 #        herdmaster-board.sh attempt <id> <status> [feedback] [link]
 #        herdmaster-board.sh supersede <id>
 #        herdmaster-board.sh release-when-done <id> [true|false]
@@ -218,6 +219,32 @@ cmd_status() {
       | if $a != "" then .answer = $a else . end else . end)')"
 }
 
+cmd_settle() {
+  local id=${1:-} key=""
+  [[ -n $id ]] || die "settle: <id> --answer <key> required"
+  shift
+  while (($#)); do
+    case $1 in
+      --answer) key=${2:-}; shift 2 ;;
+      *) die "settle: unknown argument $1" ;;
+    esac
+  done
+  [[ -n $key ]] || die "settle: --answer <key> required"
+  need_entry "$id"
+  load | jq -e --arg id "$id" 'any(.entries[]; .id == $id and .kind == "decision")' >/dev/null \
+    || die "settle: $id is not a decision"
+  load | jq -e --arg id "$id" 'any(.entries[]; .id == $id and .status == "open")' >/dev/null \
+    || die "settle: $id is not open"
+  load | jq -e --arg id "$id" --arg k "$key" 'any(.entries[]; .id == $id and any(.options[]?; .key == $k))' >/dev/null \
+    || die "settle: '$key' is not an option of $id"
+  save "$(load | jq --arg id "$id" --arg k "$key" --arg ts "$(now)" '
+    .entries |= map(if .id == $id then
+      (first(.options[] | select(.key == $k)) | .text) as $a
+      | .status = "settled" | .answer = $a | .updated = $ts
+      | if has("note") then .note += "\nAnswer: " + $a else . end
+      else . end)')"
+}
+
 cmd_attempt() {
   local id=${1:-} status=${2:-} feedback=${3:-} link=${4:-}
   [[ -n $id && -n $status ]] || die "attempt: <id> <status> required"
@@ -422,6 +449,7 @@ case $sub in
   set-review) cmd_set_review "$@" ;;
   set-group) cmd_set_group "$@" ;;
   status) cmd_status "$@" ;;
+  settle) cmd_settle "$@" ;;
   attempt) cmd_attempt "$@" ;;
   supersede) cmd_supersede "$@" ;;
   release-when-done) cmd_release_when_done "$@" ;;
@@ -430,5 +458,5 @@ case $sub in
   archive) cmd_archive ;;
   count) cmd_count ;;
   show) cmd_show ;;
-  *) sed -n '2,17p' "$0"; exit 2 ;;
+  *) sed -n '2,18p' "$0"; exit 2 ;;
 esac

@@ -50,6 +50,9 @@ eq "$("$B" settings get release)" deploy
 eq "$("$B" settings get release)" merge
 eq "$(jq -r '.grid_panes | type' "$s")" number
 "$B" settings set release nope 2>/dev/null && { echo "FAIL: bad release accepted" >&2; exit 1; }
+"$B" settings set herdr_workspace w11
+eq "$("$B" settings get herdr_workspace)" w11
+"$B" settings set herdr_workspace 'a b' 2>/dev/null && { echo "FAIL: bad workspace accepted" >&2; exit 1; }
 "$B" settings set grid_panes 0 2>/dev/null && { echo "FAIL: bad grid accepted" >&2; exit 1; }
 
 jq '.entries += [range(205) | {id: "T-\(100 + .)", kind: "task", title: "x", status: "done", review: "auto", depends_on: [], attempts: [], created: "2020-01-01T00:00:00Z", updated: "2021-01-01T00:\(10 + (. / 60 | floor)):\(10 + (. % 60))Z"}]' "$f" > "$T/big.json"

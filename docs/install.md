@@ -35,6 +35,15 @@ What it does, and only this:
 | `HERDMASTER_GRID_PANES` | 6 | panes per workers-tab grid; overflow opens another workers tab |
 | `HERDMASTER_MAX_PANES` | 4 | total panes on the current tab when layout is `main`; beyond that workers go to a workers tab |
 
+Per-project keys in `~/.claude/orchestrator/<project>/settings.json` (set with `herdmaster-board.sh settings set <key> <value>`):
+
+| key | values | meaning |
+|---|---|---|
+| `release` | `merge`, `deploy`, `push`, `ship` | word for the final step |
+| `grid_panes`, `max_panes` | positive integer | override the env vars above |
+| `worker_layout` | `tab`, `main` | overrides `HERDMASTER_WORKER_LAYOUT` |
+| `herdr_workspace` | herdr workspace id | recorded by `new-orchestrator`; lets the viewer follow the focused workspace (toggle "Follow herdr" in its settings cog) |
+
 ## 4. Use
 
 In your project's repo, run `/herdmaster`. Workers are briefed from `examples/worker-brief-template.md`.

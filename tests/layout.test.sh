@@ -53,6 +53,22 @@ has "$out" "pane split --current --direction right --no-focus"
 has "$out" "pane rename <new-pane> orchestrator"
 has "$out" "HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=planner-1 claude hi"
 
+has "$("$L" --dry-run new-orchestrator claude hi 2>&1)" "settings set herdr_workspace ws-1"
+[[ ! -f $T/.claude/orchestrator/demo/settings.json ]] || { echo "FAIL: dry-run wrote settings" >&2; exit 1; }
+cp "$T/herdr" "$T/herdr-real"
+cat > "$T/herdr" <<'FAKE2'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "pane split") echo '{"result":{"pane":{"pane_id":"pane-n"}}}' ;;
+  "pane rename"|"pane run") ;;
+  *) exec "$(dirname "$0")/herdr-real" "$@" ;;
+esac
+FAKE2
+"$L" new-orchestrator claude hi >/dev/null 2>&1
+[[ $(jq -r .herdr_workspace "$T/.claude/orchestrator/demo/settings.json") == ws-1 ]] || { echo "FAIL: workspace not recorded" >&2; exit 1; }
+rm -f -- "$T/.claude/orchestrator/demo/settings.json"
+mv "$T/herdr-real" "$T/herdr"
+
 out=$("$L" --dry-run new-orchestrator claude "/orchestrator my proj" "it's a \"brief\"" 2>&1)
 line=$(grep -F "pane run" <<<"$out")
 eval "argv=(${line#*HERDMASTER_MASTER=planner-1 })"

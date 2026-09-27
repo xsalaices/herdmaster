@@ -56,6 +56,38 @@ done
 [[ $(code -X POST "$B/tasks.json?project=beta") == 405 ]] || fail "multi POST should be 405"
 curl -s "$B/" | grep -q 'Ready to ' || fail "ready label"
 [[ $(curl -s "http://127.0.0.1:$PORT/projects.json" | jq -c '[.fixed, (.projects | map(.name))]') == '[true,["demo"]]' ]] || fail "fixed mode projects"
+echo '{"herdr_workspace":"w11"}' > "$O/beta/settings.json"
+FH="$T/herdr"
+cat > "$FH" <<'FAKE'
+#!/usr/bin/env bash
+[[ "$1 $2" == "workspace list" ]] || exit 3
+[[ -n ${FAKE_FAIL:-} ]] && exit 1
+echo "{\"result\":{\"workspaces\":[{\"focused\":false,\"workspace_id\":\"w1\"},{\"focused\":true,\"workspace_id\":\"$(cat "$(dirname "$0")/focus")\"}]}}"
+FAKE
+chmod +x "$FH"
+PORT3=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
+echo w11 > "$T/focus"
+HERDR_BIN="$FH" python3 "$V" --port "$PORT3" >"$T/out3" 2>&1 &
+PID3=$!
+for _ in $(seq 50); do curl -s "http://127.0.0.1:$PORT3/" >/dev/null 2>&1 && break; sleep 0.1; done
+F="http://127.0.0.1:$PORT3/focus.json"
+[[ $(curl -s "$F" | jq -c .) == '{"project":"beta","workspace":"w11"}' ]] || fail "focus mapped"
+echo w9 > "$T/focus"; sleep 1.2
+[[ $(curl -s "$F" | jq -c .) == '{"project":null,"workspace":"w9"}' ]] || fail "focus unmapped"
+kill "$PID3"; wait "$PID3" 2>/dev/null || true
+printf '#!/bin/sh\nexit 1\n' > "$T/herdr-bad"; chmod +x "$T/herdr-bad"
+HERDR_BIN="$T/herdr-bad" python3 "$V" --port "$PORT3" >"$T/out3" 2>&1 &
+PID3=$!
+for _ in $(seq 50); do curl -s "http://127.0.0.1:$PORT3/" >/dev/null 2>&1 && break; sleep 0.1; done
+[[ $(curl -s "$F" | jq -c .) == '{"project":null,"workspace":null}' ]] || fail "focus unreachable"
+kill "$PID3"; wait "$PID3" 2>/dev/null || true
+HERDR_BIN="$T/none" python3 "$V" --port "$PORT3" >"$T/out3" 2>&1 &
+PID3=$!
+for _ in $(seq 50); do curl -s "http://127.0.0.1:$PORT3/" >/dev/null 2>&1 && break; sleep 0.1; done
+[[ $(curl -s "$F" | jq -c .) == '{"project":null,"workspace":null}' ]] || fail "focus missing binary"
+[[ $(code -X POST "$F") == 405 ]] || fail "focus POST should be 405"
+kill "$PID3"; wait "$PID3" 2>/dev/null || true
+curl -s "$B/" | grep -q 'Follow herdr' || fail "follow toggle"
 kill "$PID2"; wait "$PID2" 2>/dev/null || true; PID2=""
 python3 "$V" --project ../x --port "$PORT2" >"$T/bad" 2>&1 && fail "traversal --project should exit non-zero"
 grep -q "invalid project name" "$T/bad" || fail "bad --project message"

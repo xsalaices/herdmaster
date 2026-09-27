@@ -3,13 +3,16 @@
 Usage: herdmaster-viewer.py [--project NAME] [--port N]
 Without a project (--project or $HERDMASTER_PROJECT) it shows a tab per ~/.claude/orchestrator/*/tasks.json.
 Port defaults to $HERDMASTER_VIEWER_PORT or 8765. Binds 127.0.0.1 only.
+$HERDR_BIN (default herdr) is asked which workspace is focused for /focus.json.
 Single-threaded stdlib server: fine for one local viewer, swap in ThreadingHTTPServer if several tabs stall it."""
 import argparse
 import errno
 import json
 import os
 import re
+import subprocess
 import sys
+import time
 from urllib.parse import parse_qs, urlsplit
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -99,12 +102,13 @@ const STATUS={"in review":["review","In review"],"finished":["review","In review
 const ORDER=["review","failed","working","ready"];
 const short=id=>(id||"").replace(/-0*/,"");
 let ctx={suffix:"",word:"deploy",settings:{}},pastOpen=false,showAll=false;
-const KEYS=["release","grid_panes","worker_layout","max_panes"];
-const prefs={theme:"auto",done:10,tab:""};
+const KEYS=["release","grid_panes","worker_layout","max_panes","herdr_workspace"];
+const prefs={theme:"auto",done:10,tab:"",follow:true};
 try{const s=JSON.parse(localStorage.getItem("hm-prefs")||"{}");
   if(["auto","light","dark"].includes(s.theme))prefs.theme=s.theme;
   if(Number.isInteger(s.done)&&s.done>0)prefs.done=s.done;
-  if(typeof s.tab==="string")prefs.tab=s.tab}catch(_){}
+  if(typeof s.tab==="string")prefs.tab=s.tab;
+  if(typeof s.follow==="boolean")prefs.follow=s.follow}catch(_){}
 function setPref(k,v){prefs[k]=v;try{localStorage.setItem("hm-prefs",JSON.stringify(prefs))}catch(_){}applyTheme()}
 function applyTheme(){const r=document.documentElement;if(prefs.theme==="auto")r.removeAttribute("data-theme");else r.dataset.theme=prefs.theme}
 applyTheme();
@@ -137,7 +141,7 @@ function render(b){
   if(past.length>prefs.done){const m=$("button","more",showAll?"show fewer":"show all "+past.length);m.type="button";m.onclick=()=>{showAll=!showAll;last="";tick()};d.append(m)}
   pe.replaceChildren(d);
 }
-let last="",lastPanel="",tabs=[],fixed=true,cur=null,picked=false;
+let last="",lastPanel="",tabs=[],fixed=true,cur=null,picked=false,seen;
 function sel(opts,val,onchange,label){
   const w=$("span","sel"),s=$("select");s.setAttribute("aria-label",label);
   opts.forEach(([v,l])=>{const o=$("option","",l);o.value=v;o.selected=String(v)===val;s.append(o)});
@@ -151,11 +155,12 @@ function seg(opts,val,onchange,label){
 }
 function setRow(label,ctl){const r=$("div","set");r.append($("span","k",label),ctl);return r}
 function renderPanel(){
-  const key=JSON.stringify([ctx.settings,tabs.map(p=>p.name),fixed,ctx.suffix]);
+  const key=JSON.stringify([ctx.settings,tabs.map(p=>p.name),fixed,ctx.suffix,prefs.follow]);
   if(key===lastPanel)return;lastPanel=key;
   const hd=$("div","hd");hd.append($("div","ttl","Settings"),$("p","sub","Display options are saved in this browser."));
   const rows=[setRow("Theme",seg([["auto","Auto"],["light","Light"],["dark","Dark"]],prefs.theme,v=>setPref("theme",v),"Theme")),
     setRow("Done items shown",sel([5,10,25,50].map(n=>[n,n]),String(prefs.done),v=>{setPref("done",+v);last="";tick()},"Done items shown"))];
+  if(!fixed&&tabs.length>1)rows.push(setRow("Follow herdr",seg([[true,"On"],[false,"Off"]],prefs.follow,v=>{setPref("follow",v);seen=undefined;follow()},"Follow herdr")));
   if(!fixed&&tabs.length>1)rows.push(setRow("Opens first",sel([["","Most decisions"],...tabs.map(t=>[t.name,t.name])],prefs.tab,v=>setPref("tab",v),"Opens first")));
   const sh=$("h3","","Project"+(ctx.suffix?" "+ctx.suffix.trim():""));
   const kv=$("div","kv");
@@ -204,7 +209,16 @@ function togglePanel(open){panel.hidden=!open;cog.setAttribute("aria-expanded",o
 cog.onclick=()=>togglePanel(panel.hidden);
 document.addEventListener("click",e=>{if(!panel.hidden&&!e.target.closest(".pop"))togglePanel(false)});
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!panel.hidden){togglePanel(false);cog.focus()}});
-tick();setInterval(tick,3000);
+async function follow(){
+  if(!prefs.follow||fixed)return;
+  try{
+    const f=await(await fetch("/focus.json",{cache:"no-store"})).json(),p=f&&f.project||null;
+    if(p===seen)return;
+    seen=p;
+    if(p&&tabs.some(t=>t.name===p)&&p!==cur){cur=p;picked=true;last="";tick()}
+  }catch(_){}
+}
+tick().then(follow);setInterval(tick,3000);setInterval(follow,2000);
 </script></body></html>
 """
 
@@ -246,6 +260,35 @@ def project_settings(root, project):
     return doc if isinstance(doc, dict) else {}
 
 
+HERDR_BIN = os.environ.get("HERDR_BIN", "herdr")
+_focus = {"at": 0.0, "workspace": None}
+
+
+def focused_workspace():
+    if time.monotonic() - _focus["at"] < 1:
+        return _focus["workspace"]
+    ws = None
+    try:
+        out = subprocess.run([HERDR_BIN, "workspace", "list"], capture_output=True, text=True, timeout=2).stdout
+        for w in json.loads(out)["result"]["workspaces"]:
+            if w.get("focused") and isinstance(w.get("workspace_id"), str):
+                ws = w["workspace_id"]
+                break
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        pass
+    _focus.update(at=time.monotonic(), workspace=ws)
+    return ws
+
+
+def focused_project(root, workspace):
+    if not workspace:
+        return None
+    for p in list_projects(root):
+        if project_settings(root, p["name"]).get("herdr_workspace") == workspace:
+            return p["name"]
+    return None
+
+
 def make_handler(fixed, root):
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code, body, ctype):
@@ -282,6 +325,9 @@ def make_handler(fixed, root):
                 else:
                     projects = list_projects(root)
                 self._send(200, json.dumps({"fixed": bool(fixed), "projects": projects}), "application/json")
+            elif route == "/focus.json":
+                ws = focused_workspace()
+                self._send(200, json.dumps({"project": focused_project(root, ws), "workspace": ws}), "application/json")
             elif route == "/settings.json":
                 project = self._project(u.query)
                 if project:

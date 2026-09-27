@@ -5,7 +5,7 @@
 #        herdmaster-board.sh attempt <id> <status> [feedback] [link]
 #        herdmaster-board.sh supersede <id>
 #        herdmaster-board.sh release-when-done <id> [true|false]
-#        herdmaster-board.sh settings get [key] | settings set <key> <value>   keys: release, grid_panes, worker_layout, max_panes
+#        herdmaster-board.sh settings get [key] | settings set <key> <value>   keys: release, grid_panes, worker_layout, max_panes, herdr_workspace
 #        herdmaster-board.sh import-legacy
 #        herdmaster-board.sh archive
 #        herdmaster-board.sh count | show
@@ -138,7 +138,7 @@ cmd_settings() {
   case $op in
     get)
       if [[ -z $key ]]; then settings_json | jq -S .; return; fi
-      [[ $key =~ ^(release|grid_panes|worker_layout|max_panes)$ ]] || die "settings: unknown key '$key'"
+      [[ $key =~ ^(release|grid_panes|worker_layout|max_panes|herdr_workspace)$ ]] || die "settings: unknown key '$key'"
       settings_json | jq -r --arg k "$key" '(.[$k] // (if $k == "release" then "deploy" else empty end)) | tostring' ;;
     set)
       [[ -n $key && -n $val ]] || die "settings set: <key> <value> required"
@@ -150,6 +150,8 @@ cmd_settings() {
           json=$(jq -cn --arg v "$val" '$v') ;;
         grid_panes|max_panes) [[ $val =~ ^[1-9][0-9]*$ ]] || die "settings: $key must be a positive integer"
           json=$val ;;
+        herdr_workspace) [[ $val =~ ^[A-Za-z0-9._:-]+$ ]] || die "settings: herdr_workspace must be a herdr workspace id"
+          json=$(jq -cn --arg v "$val" '$v') ;;
         *) die "settings: unknown key '$key'" ;;
       esac
       mkdir -p "$DIR"

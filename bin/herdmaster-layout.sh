@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Places worker panes and keeps the grid even.
 # Usage: herdmaster-layout.sh [--dry-run] new-worker <label> <command...>   prints the new pane id
-#        herdmaster-layout.sh [--dry-run] new-orchestrator <command...>    splits the current pane right, labels it orchestrator, prints the new pane id
+#        herdmaster-layout.sh [--dry-run] new-orchestrator <command...>    splits the current pane right, labels it orchestrator, records the herdr workspace in settings, prints the new pane id
 #        herdmaster-layout.sh [--dry-run] rebalance [pane]                 equal widths for the tab of pane (default: current)
 # Per-project settings.json (worker_layout, grid_panes, max_panes) overrides the env vars below.
 # Env: HERDMASTER_WORKER_LAYOUT (tab|main, default tab), HERDMASTER_GRID_PANES (default 6),
@@ -95,7 +95,16 @@ cmd_new_orchestrator() {
   pane=$(mut_json .result.pane.pane_id "<new-pane>" pane split --current --direction right --no-focus)
   mut pane rename "$pane" orchestrator >&2
   mut pane run "$pane" "HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=$(printf '%q' "$master") $(printf '%q ' "$@")" >&2
+  record_workspace >&2
   echo "$pane"
+}
+
+# Lets the viewer follow the focused herdr workspace (see docs/design/board.md).
+record_workspace() {
+  [[ -n ${HERDMASTER_PROJECT:-} ]] || return 0
+  local ws board; ws=$(current_pane_json | jq -r '.workspace_id // empty'); [[ -n $ws ]] || return 0
+  board="$(dirname "$0")/herdmaster-board.sh"
+  if (( DRY )); then echo "[dry-run] $board settings set herdr_workspace $ws"; else "$board" settings set herdr_workspace "$ws"; fi
 }
 
 # Columns are the distinct x origins of the tab's panes. Each column boundary is a "right" split; --amount is a

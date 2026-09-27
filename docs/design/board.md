@@ -84,8 +84,11 @@ Per project: `~/.claude/orchestrator/<project>/settings.json`, edited with `herd
 | `grid_panes` | positive integer | env, then 6 |
 | `worker_layout` | `tab` or `main` | env, then `tab` |
 | `max_panes` | positive integer | env, then 4 |
+| `herdr_workspace` | herdr workspace id, e.g. `w11` | unset |
 
 Precedence for the layout keys: settings file, then the `HERDMASTER_*` environment variable, then the built-in default. `herdmaster-layout.sh` reads the file.
+
+`herdr_workspace` maps a herdr workspace to the project. `herdmaster-layout.sh new-orchestrator` records it from `herdr pane current`, and the viewer's `GET /focus.json` uses it to report which project owns the focused workspace, so the page can follow herdr. Unmapped or unreachable herdr gives `null`.
 
 ## Archive
 

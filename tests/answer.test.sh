@@ -19,6 +19,8 @@ cat > "$O/demo/tasks.json" <<'JSON'
 {"id":"D-002","kind":"decision","status":"settled","title":"Done already","answer":"x","options":[{"key":"A","text":"One"}]},
 {"id":"D-003","kind":"decision","status":"open","title":"Open-ended"},
 {"id":"D-004","kind":"decision","status":"open","title":"Ship it","options":[{"key":"A","text":"Merge the PR now"},{"key":"B","text":"  deploy to prod"},{"key":"C","text":"PUSH it"},{"key":"D","text":"Wait a day"},{"key":"E","text":"﻿merge now"},{"key":"F","text":"​ Deploy later"},{"key":"G","text":"Wait — then merge"},{"key":"H","text":"🚀 Deploy to prod"}]},
+{"id":"D-005","kind":"decision","status":"open","title":"Merge strategy","options":[{"key":"A","text":"Squash"},{"key":"B","text":"Rebase"}]},
+{"id":"D-006","kind":"decision","status":"open","title":"Pick a font weight","note":"‮please deploy","options":[{"key":"A","text":"Light"},{"key":"B","text":"Bold"}]},
 {"id":"T-001","kind":"task","status":"working","title":"t","options":[{"key":"A","text":"x"}]}]}
 JSON
 PORT=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
@@ -114,6 +116,9 @@ bad '{"project":"demo","id":"D-004","key":"E","text":"﻿merge now"}' "BOM-prefi
 bad '{"project":"demo","id":"D-004","key":"F","text":"​ Deploy later"}' "zero-width-prefixed deploy option"
 bad '{"project":"demo","id":"D-004","key":"G","text":"Wait — then merge"}' "release word later in text is now caught"
 bad '{"project":"demo","id":"D-004","key":"H","text":"🚀 Deploy to prod"}' "emoji-prefixed deploy option"
+bad "$(python3 -c 'import json;print(json.dumps({"project":"demo","id":"D-001","key":"B","text":"‮Top nav"}))')" "bidi-control option text"
+bad "$(python3 -c 'import json;print(json.dumps({"project":"demo","id":"D-005","key":"A","text":"Squash"}))')" "blocked word in decision title"
+bad "$(python3 -c 'import json;print(json.dumps({"project":"demo","id":"D-006","key":"A","text":"Light"}))')" "bidi control in decision note"
 bad '{"project":"demo","id":"D-001"' "malformed JSON"
 bad '["demo","D-001","B"]' "non-object body"
 bad '{"project":"demo","id":"D-001","key":"B","text":"Top nav","extra":1}' "extra field"
@@ -165,7 +170,9 @@ assert body.index("if(os.length){") < body.index("$(\"button\""), "buttons only 
 assert "if(answerable(e,o)&&" in body, "buttons only for answerable options"
 assert "function uxReleaseWord(text){" in js, "release-word check present"
 assert "NO_ANSWER_WORDS.some(w=>norm.includes(w))" in js, "release words searched anywhere, not just prefix"
-assert "function answerable(e,o){return e.kind===\"decision\"&&e.status===\"open\"&&!uxReleaseWord(o.text)}" in js, "answerable uses uxReleaseWord"
+assert "const BIDI_RE=/[\\u202A-\\u202E\\u2066-\\u2069]/;" in js, "bidi control check present"
+assert "function blocked(text){return BIDI_RE.test(String(text))||uxReleaseWord(text)}" in js, "blocked combines bidi and release-word checks"
+assert "function answerable(e,o){return e.kind===\"decision\"&&e.status===\"open\"&&!blocked(o.text)&&!blocked(e.title)&&!blocked(e.note)}" in js, "answerable checks option text plus decision title and note"
 click = re.search(r"box\.onclick=\(\)=>\{(.*?)\};", body, re.S)
 assert click, "option click handler"
 assert "pending.set(" in click.group(1) and "fetch" not in click.group(1) and "answer(" not in click.group(1), "first click only arms the confirm step"
@@ -191,7 +198,9 @@ js = sys.stdin.read()
 parts = [
   re.search(r"const NO_ANSWER_WORDS=.*?\n", js).group(0),
   re.search(r"const INVISIBLE_RE=.*?\n", js).group(0),
+  re.search(r"const BIDI_RE=.*?\n", js).group(0),
   re.search(r"function uxReleaseWord\(text\)\{.*?\n\}\n", js, re.S).group(0),
+  re.search(r"function blocked\(text\)\{.*?\n", js).group(0),
   re.search(r"function answerable\(e,o\)\{.*?\n", js).group(0),
 ]
 print("".join(parts))
@@ -205,6 +214,9 @@ eq(answerable(d, { text: "Sidebar" }), true, "plain option");
 for (const t of ["Merge it", "  deploy now", "PUSH", "push to main", "﻿merge now", "​ Deploy later", "Wait — then merge", "1. Merge the PR", "**Merge** the PR", "🚀 Deploy to prod", "Ｍｅｒｇｅ"]) eq(answerable(d, { text: t }), false, t);
 eq(answerable({ kind: "decision", status: "settled" }, { text: "Sidebar" }), false, "settled");
 eq(answerable({ kind: "task", status: "open" }, { text: "Sidebar" }), false, "task");
+eq(answerable(d, { text: "‮evil" }), false, "bidi control in option text");
+eq(answerable(Object.assign({}, d, { title: "Merge strategy" }), { text: "Sidebar" }), false, "blocked word in decision title");
+eq(answerable(Object.assign({}, d, { note: "‮please deploy" }), { text: "Sidebar" }), false, "bidi control in decision note");
 JS
 node "$T/ans.check.js" "$T/ans.js" || fail "answerable checks"
 echo ok

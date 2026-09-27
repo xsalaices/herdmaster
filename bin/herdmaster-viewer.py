@@ -238,15 +238,19 @@ function addNote(r,e){
 function optsOf(e){return Array.isArray(e.options)?e.options.filter(o=>o&&typeof o.key==="string"&&typeof o.text==="string"):[]}
 const NO_ANSWER_WORDS=["merge","deploy","push"];
 const INVISIBLE_RE=/[\s\p{Cc}\p{Cf}\p{Mn}ㅤﾠ⠀]/gu;
+const BIDI_RE=/[\u202A-\u202E\u2066-\u2069]/;
 function uxReleaseWord(text){
-  // Best-effort UX filter only, no security value: see roles/orchestrator.md and docs/design/board.md,
-  // which say answers.jsonl never by itself authorizes merge/deploy/push. Keep this word list and the
-  // NFKC+casefold+strip-then-search-anywhere approach in sync with herdmaster-board.sh's jq settle check.
+  // Speed bump only, no security value: see roles/orchestrator.md and docs/design/board.md, which say
+  // answers.jsonl never by itself authorizes merge/deploy/push -- this cannot catch paraphrases or
+  // look-alikes. Keep this word list and the NFKC+casefold+strip-then-search-anywhere approach in sync
+  // with herdmaster-board.sh's jq settle check. Bidirectional control characters are checked separately,
+  // on the UNSTRIPPED text, and rejected outright rather than stripped and allowed through (see blocked()).
   const norm=String(text).normalize("NFKC").replace(INVISIBLE_RE,"").toLowerCase();
   return NO_ANSWER_WORDS.some(w=>norm.includes(w));
 }
+function blocked(text){return BIDI_RE.test(String(text))||uxReleaseWord(text)}
 const pending=new Map(),sent=new Map(),failedAns=new Map();
-function answerable(e,o){return e.kind==="decision"&&e.status==="open"&&!uxReleaseWord(o.text)}
+function answerable(e,o){return e.kind==="decision"&&e.status==="open"&&!blocked(o.text)&&!blocked(e.title)&&!blocked(e.note)}
 async function answer(e,p){
   const qk=cur+"\n"+e.id;
   let err="Could not send the answer.";
@@ -463,6 +467,7 @@ BODY_MAX = 4096
 NO_ANSWER_WORDS = ("merge", "deploy", "push")
 INVISIBLE_CATS = {"Zs", "Zl", "Zp", "Cc", "Cf", "Mn"}
 INVISIBLE_CHARS = {"ㅤ", "ﾠ", "⠀"}
+BIDI_CONTROLS = set("\u202A\u202B\u202C\u202D\u202E\u2066\u2067\u2068\u2069")
 
 
 def read_json(path):
@@ -644,15 +649,27 @@ class AnswerError(Exception):
 
 
 def ux_release_word(text):
-    """Best-effort UX filter only, no security value: an answers.jsonl line never by itself authorizes
-    merge, deploy or push (see roles/orchestrator.md, docs/design/board.md). NFKC-normalizes, casefolds,
-    strips common invisible/filler characters, then looks for the banned words anywhere in what remains.
-    Keep this word list and approach in sync with the page's JS uxReleaseWord and herdmaster-board.sh's
-    jq settle check."""
+    """Speed bump only, no security value whatsoever: an answers.jsonl line never by itself authorizes
+    merge, deploy or push (see roles/orchestrator.md, docs/design/board.md) -- this cannot catch
+    paraphrases or convincing look-alikes. NFKC-normalizes, casefolds, strips common invisible/filler
+    characters, then looks for the banned words anywhere in what remains. Keep this word list and approach
+    in sync with the page's JS uxReleaseWord and herdmaster-board.sh's jq settle check."""
     norm = unicodedata.normalize("NFKC", text)
     stripped = "".join(ch for ch in norm if unicodedata.category(ch) not in INVISIBLE_CATS and ch not in INVISIBLE_CHARS)
     folded = stripped.casefold()
     return any(w in folded for w in NO_ANSWER_WORDS)
+
+
+def has_bidi_control(text):
+    """Bidirectional control characters are checked on the text AS GIVEN, never stripped away first --
+    they are rejected outright, not stripped and allowed through, since they are exactly what would let a
+    look-alike answer render safely while meaning something else. Same rationale as ux_release_word: no
+    security value, just a speed bump; see blocked()."""
+    return any(ch in BIDI_CONTROLS for ch in text)
+
+
+def blocked(text):
+    return has_bidi_control(text) or ux_release_word(text)
 
 
 def check_answer(root, fixed, body):
@@ -676,14 +693,18 @@ def check_answer(root, fixed, body):
         raise AnswerError(400, "Unknown decision")
     if entry.get("kind") != "decision" or entry.get("status") != "open":
         raise AnswerError(400, "Not an open decision")
+    title = entry.get("title") if isinstance(entry.get("title"), str) else ""
+    note = entry.get("note") if isinstance(entry.get("note"), str) else ""
+    if blocked(title) or blocked(note):
+        raise AnswerError(400, "This decision's title or note contains merge, deploy, push or a directional control character; answer in chat, not from the page")
     opts = entry.get("options") if isinstance(entry.get("options"), list) else []
     opt = next((o for o in opts if isinstance(o, dict) and o.get("key") == key and isinstance(o.get("text"), str)), None)
     if opt is None:
         raise AnswerError(400, "Unknown option key")
     if opt["text"] != text:
         raise AnswerError(400, "Option text has changed since you loaded the page; refresh and try again")
-    if ux_release_word(opt["text"]):
-        raise AnswerError(400, "Merge, deploy and push are answered in chat, not from the page")
+    if blocked(opt["text"]):
+        raise AnswerError(400, "Merge, deploy, push or a directional control character are answered in chat, not from the page")
     return {"project": project, "id": did, "key": key, "text": opt["text"]}
 
 

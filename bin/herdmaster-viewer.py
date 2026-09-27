@@ -7,6 +7,7 @@ $HERDR_BIN (default herdr) is asked which workspace is focused for /focus.json.
 Single-threaded stdlib server: fine for one local viewer, swap in ThreadingHTTPServer if several tabs stall it."""
 import argparse
 import errno
+import fcntl
 import json
 import os
 import re
@@ -14,6 +15,7 @@ import stat
 import subprocess
 import sys
 import time
+import unicodedata
 from urllib.parse import parse_qs, urlsplit
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -403,6 +405,8 @@ poll().then(follow);setInterval(poll,3000);setInterval(follow,500);
 """
 
 
+PAGE_CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'; "
+            "connect-src 'self'; base-uri 'none'; frame-ancestors 'none'")
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
@@ -459,11 +463,12 @@ def all_boards(fixed, root):
             "settings": {n: project_settings(root, n) for n in names}}
 
 
-FILE_ROOTS = ("/private/tmp/claude-501", "~/.claude")
+TMP_ROOT = "/private/tmp/claude-501"
+ORCH_ROOT = "~/.claude/orchestrator"
 FILE_MAX = 10 * 1024 * 1024
 FILE_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp",
               "txt": "text/plain; charset=utf-8", "md": "text/plain; charset=utf-8", "log": "text/plain; charset=utf-8",
-              "json": "text/plain; charset=utf-8", "diff": "text/plain; charset=utf-8", "patch": "text/plain; charset=utf-8"}
+              "diff": "text/plain; charset=utf-8", "patch": "text/plain; charset=utf-8"}
 IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp"}
 FILE_DENY = {"secrets"}
 
@@ -473,9 +478,29 @@ class FileError(Exception):
         self.code, self.msg = code, msg
 
 
+def fold(name):
+    return unicodedata.normalize("NFKC", name).casefold()
+
+
+def check_real(real):
+    """Raises FileError unless a resolved path is under an allowed root and passes the deny rules."""
+    tmp = os.path.realpath(TMP_ROOT)
+    orch = os.path.realpath(os.path.expanduser(ORCH_ROOT))
+    if real.startswith(tmp + os.sep):
+        parts = real[len(tmp) + 1:].split(os.sep)
+    elif real.startswith(orch + os.sep):
+        parts = real[len(orch) + 1:].split(os.sep)
+        if len(parts) < 3 or not NAME_RE.fullmatch(parts[0]) or parts[1] != "review":
+            raise FileError(403, "Outside the allowed folders")
+    else:
+        raise FileError(403, "Outside the allowed folders")
+    if any(x.startswith(".") or fold(x) in FILE_DENY for x in parts):
+        raise FileError(403, "Hidden or protected path")
+
+
 def open_review_file(raw):
     """Validates a requested path and returns (fd, ext, size); raises FileError. Callers must close the fd.
-    Ceiling: realpath and open are two steps, so a directory swapped for a symlink in between could escape; roots are owner-writable only."""
+    Ceiling: realpath and open are two steps; on macOS the fd's own path is re-checked after open (F_GETPATH), elsewhere a directory swapped for a symlink in between could escape. Roots are owner-writable only."""
     if not raw or len(raw) > 4096:
         raise FileError(400, "Missing or too long path")
     if "\0" in raw:
@@ -485,17 +510,7 @@ def open_review_file(raw):
     if ".." in raw or os.path.normpath(raw) != raw:
         raise FileError(400, "Path must be normalised without '..'")
     real = os.path.realpath(raw)
-    rel = None
-    for r in FILE_ROOTS:
-        root = os.path.realpath(os.path.expanduser(r))
-        if real.startswith(root + os.sep):
-            rel = real[len(root) + 1:]
-            break
-    if rel is None:
-        raise FileError(403, "Outside the allowed folders")
-    parts = rel.split(os.sep)
-    if any(x.startswith(".") or x in FILE_DENY for x in parts):
-        raise FileError(403, "Hidden or protected path")
+    check_real(real)
     ext = os.path.splitext(real)[1][1:].lower()
     if ext not in FILE_TYPES:
         raise FileError(415, "File type not allowed")
@@ -506,6 +521,13 @@ def open_review_file(raw):
     except OSError:
         raise FileError(403, "Cannot open")
     try:
+        if hasattr(fcntl, "F_GETPATH"):
+            try:
+                opened = fcntl.fcntl(fd, fcntl.F_GETPATH, b"\0" * 1024).split(b"\0", 1)[0].decode()
+            except (OSError, UnicodeDecodeError):
+                opened = None
+            if opened:
+                check_real(os.path.realpath(opened))
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
             raise FileError(400, "Not a regular file")
@@ -546,14 +568,21 @@ def focused_project(root, workspace):
     return None
 
 
-def make_handler(fixed, root):
+def make_handler(fixed, root, port):
+    hosts = ("127.0.0.1:%d" % port, "localhost:%d" % port)
+
     class Handler(BaseHTTPRequestHandler):
-        def _send(self, code, body, ctype):
+        timeout = 5
+
+        def _send(self, code, body, ctype, headers=()):
             data = body.encode()
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            for k, v in headers:
+                self.send_header(k, v)
             self.end_headers()
             self.wfile.write(data)
 
@@ -561,6 +590,8 @@ def make_handler(fixed, root):
             self._send(code, json.dumps({"error": msg}), "application/json")
 
         def _file(self, q):
+            if self.headers.get("Sec-Fetch-Site", "same-origin") not in ("same-origin", "none"):
+                return self._json_error(403, "Cross-site request")
             vals = q.get("path") or []
             try:
                 if len(vals) != 1:
@@ -592,10 +623,12 @@ def make_handler(fixed, root):
             return name
 
         def do_GET(self):
+            if self.headers.get("Host") not in hosts:
+                return self._json_error(421, "Unexpected Host")
             u = urlsplit(self.path)
             route = u.path
             if route in ("/", "/index.html"):
-                self._send(200, PAGE, "text/html; charset=utf-8")
+                self._send(200, PAGE, "text/html; charset=utf-8", (("Content-Security-Policy", PAGE_CSP),))
             elif route == "/project" and fixed:
                 self._send(200, fixed, "text/plain; charset=utf-8")
             elif route == "/projects.json":
@@ -662,7 +695,7 @@ def main():
         sys.exit("herdmaster-viewer: invalid project name '%s'" % a.project)
     root = os.path.expanduser("~/.claude/orchestrator")
     try:
-        srv = HTTPServer(("127.0.0.1", a.port), make_handler(a.project, root))
+        srv = HTTPServer(("127.0.0.1", a.port), make_handler(a.project, root, a.port))
     except OSError as e:
         if e.errno != errno.EADDRINUSE:
             raise

@@ -261,7 +261,7 @@ def project_settings(root, project):
 
 
 HERDR_BIN = os.environ.get("HERDR_BIN", "herdr")
-_focus = {"at": 0.0, "workspace": None}
+_focus = {"at": float("-inf"),"workspace": None}
 
 
 def focused_workspace():

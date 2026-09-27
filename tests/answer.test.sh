@@ -20,7 +20,7 @@ cat > "$O/demo/tasks.json" <<'JSON'
 {"id":"D-001","kind":"decision","status":"open","title":"Pick layout","note":"Context","options":[{"key":"A","text":"Sidebar","recommended":false},{"key":"B","text":"Top nav","recommended":true}]},
 {"id":"D-002","kind":"decision","status":"settled","title":"Done already","answer":"x","options":[{"key":"A","text":"One"}]},
 {"id":"D-003","kind":"decision","status":"open","title":"Open-ended"},
-{"id":"D-004","kind":"decision","status":"open","title":"Ship it","options":[{"key":"A","text":"Merge the PR now"},{"key":"B","text":"  deploy to prod"},{"key":"C","text":"PUSH it"},{"key":"D","text":"Wait a day"}]},
+{"id":"D-004","kind":"decision","status":"open","title":"Ship it","options":[{"key":"A","text":"Merge the PR now"},{"key":"B","text":"  deploy to prod"},{"key":"C","text":"PUSH it"},{"key":"D","text":"Wait a day"},{"key":"E","text":"\ufeffmerge now"},{"key":"F","text":"\u200b\u00a0Deploy later"},{"key":"G","text":"Wait \u2014 then merge"}]},
 {"id":"T-001","kind":"task","status":"working","title":"t","options":[{"key":"A","text":"x"}]}]}
 JSON
 PORT=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
@@ -92,6 +92,8 @@ bad '{"project":"demo","id":"D-003","key":"A"}' "open-ended question"
 bad '{"project":"demo","id":"D-004","key":"A"}' "merge option"
 bad '{"project":"demo","id":"D-004","key":"B"}' "deploy option"
 bad '{"project":"demo","id":"D-004","key":"C"}' "push option"
+bad '{"project":"demo","id":"D-004","key":"E"}' "BOM-prefixed merge option"
+bad '{"project":"demo","id":"D-004","key":"F"}' "zero-width-prefixed deploy option"
 bad '{"project":"demo","id":"D-001"' "malformed JSON"
 bad '["demo","D-001","B"]' "non-object body"
 bad '{"project":"demo","id":"D-001","key":"B","extra":1}' "extra field"
@@ -102,12 +104,14 @@ bad '' "empty body"
 [[ $(ok "$GOOD") == 200 ]] || fail "happy path"
 [[ $(jq -c . "$T/resp") == '{"ok":true}' ]] || fail "happy path body"
 [[ $(wc -l < "$O/demo/answers.jsonl") -eq 1 ]] || fail "exactly one line appended"
-[[ $(jq -c '[.project, .id, .key, (.at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$"))]' "$O/demo/answers.jsonl") == '["demo","D-001","B",true]' ]] || fail "answer line content"
+[[ $(jq -c '[keys, .project, .id, .key, .text, (.at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$"))]' "$O/demo/answers.jsonl") == '[["at","id","key","project","text"],"demo","D-001","B","Top nav",true]' ]] || fail "answer line content"
 [[ $(mode "$O/demo/answers.jsonl") == 0o600 ]] || fail "answers.jsonl mode"
 [[ $(shasum "$O/demo/tasks.json") == "$BOARD_SUM" ]] || fail "tasks.json changed"
 [[ $(jq -r '.entries[0].status' "$O/demo/tasks.json") == open ]] || fail "decision still open until the orchestrator settles it"
 [[ $(ok '{"project":"demo","id":"D-004","key":"D"}') == 200 ]] || fail "plain option next to release options"
 [[ $(wc -l < "$O/demo/answers.jsonl") -eq 2 ]] || fail "second answer appends"
+[[ $(tail -1 "$O/demo/answers.jsonl" | jq -r .text) == "Wait a day" ]] || fail "second answer text"
+[[ $(ok '{"project":"demo","id":"D-004","key":"G"}') == 200 ]] || fail "release word later in the text is fine"
 
 hdr=$(curl -s -D - -o /dev/null -X POST --data-binary "$GOOD" -H "Content-Type: application/json" -H "X-Herdmaster-Token: $TOK" -H "Origin: http://evil.example" "$B/answer")
 grep -qi '^access-control-' <<<"$hdr" && fail "CORS header on POST"
@@ -138,7 +142,7 @@ assert body.count("$(\"button\"") == 1, "one option button constructor"
 assert body.index("if(os.length){") < body.index("$(\"button\""), "buttons only inside the options branch"
 assert "if(answerable(e,o)&&" in body, "buttons only for answerable options"
 assert "const NO_BUTTON=/^(merge|deploy|push)/i;" in js, "release words get no button"
-assert "!NO_BUTTON.test(o.text.trim())" in js, "answerable checks release words"
+assert "!NO_BUTTON.test(o.text.replace(/^[\\s\\p{Cc}\\p{Cf}]+/u,\"\"))" in js, "answerable checks release words"
 click = re.search(r"box\.onclick=\(\)=>\{(.*?)\};", body, re.S)
 assert click, "option click handler"
 assert "pending.set(" in click.group(1) and "fetch" not in click.group(1) and "answer(" not in click.group(1), "first click only arms the confirm step"
@@ -163,7 +167,8 @@ eval(fs.readFileSync(process.argv[2], "utf8") + ";globalThis.answerable=answerab
 const d = { kind: "decision", status: "open" };
 const eq = (a, b, m) => { if (a !== b) { console.error("FAIL", m); process.exit(1) } };
 eq(answerable(d, { text: "Sidebar" }), true, "plain option");
-for (const t of ["Merge it", "  deploy now", "PUSH", "push to main"]) eq(answerable(d, { text: t }), false, t);
+for (const t of ["Merge it", "  deploy now", "PUSH", "push to main", "\ufeffmerge now", "\u200b\u00a0Deploy later"]) eq(answerable(d, { text: t }), false, t);
+eq(answerable(d, { text: "Wait \u2014 then merge" }), true, "release word later");
 eq(answerable({ kind: "decision", status: "settled" }, { text: "Sidebar" }), false, "settled");
 eq(answerable({ kind: "task", status: "open" }, { text: "Sidebar" }), false, "task");
 JS

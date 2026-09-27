@@ -80,7 +80,23 @@ eq "$(jq -r --arg p "$p" '.entries[] | select(.id == $p) | .answer' "$f")" Sans
 q=$("$B" add decision "Pick size" --option "A|Small" --option "B|Large")
 "$B" settle "$q" --answer A
 eq "$(jq -c --arg q "$q" '.entries[] | select(.id == $q) | [.status, .answer, has("note")]' "$f")" '["settled","Small",false]'
-eq "$(jq '.entries | length' "$f")" 8
+u=$("$B" add decision "Pick tone" --option "A|Formal" --option "B|Casual")
+"$B" set-options "$u" --option "A|Formal" --option "B|Merge to main"
+"$B" settle "$u" --answer B --answer-text "Casual" 2>/dev/null && { echo "FAIL: settle with changed option text" >&2; exit 1; }
+"$B" settle "$u" --answer A --answer-text "Formal " 2>/dev/null && { echo "FAIL: settle with near-miss text" >&2; exit 1; }
+eq "$(jq -r --arg u "$u" '.entries[] | select(.id == $u) | .status' "$f")" open
+"$B" settle "$u" --answer A --answer-text "Formal"
+eq "$(jq -c --arg u "$u" '.entries[] | select(.id == $u) | [.status, .answer]' "$f")" '["settled","Formal"]'
+m=$("$B" add decision "Release" --option "A|Merge to main" --option "B|$(printf '\xef\xbb\xbf')deploy now" --option "C|$(printf '\xe2\x80\x8b')PUSH" --option "D|Wait, then merge")
+for k in A B C; do
+  txt=$(jq -r --arg m "$m" --arg k "$k" '.entries[] | select(.id == $m) | .options[] | select(.key == $k) | .text' "$f")
+  "$B" settle "$m" --answer "$k" --answer-text "$txt" 2>/dev/null && { echo "FAIL: settled release option $k" >&2; exit 1; }
+  "$B" settle "$m" --answer "$k" 2>/dev/null && { echo "FAIL: settled release option $k without text" >&2; exit 1; }
+done
+eq "$(jq -r --arg m "$m" '.entries[] | select(.id == $m) | .status' "$f")" open
+"$B" settle "$m" --answer D --answer-text "Wait, then merge"
+eq "$(jq -r --arg m "$m" '.entries[] | select(.id == $m) | .answer' "$f")" "Wait, then merge"
+eq "$(jq '.entries | length' "$f")" 10
 
 r=$("$B" add task "Review me")
 "$B" set-review "$r" --summary "Adds a panel" --diff "main..feat" --tests "12 passed" --preview "http://127.0.0.1:5173/" --screenshot /private/tmp/claude-501/a.png --screenshot /private/tmp/claude-501/b.png --link "Docs|https://example.com/d" --link "PR|https://example.com/pr/1"

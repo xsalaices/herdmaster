@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Reads and writes ~/.claude/orchestrator/<project>/tasks.json (see docs/design/board.md).
 # Usage: herdmaster-board.sh add <task|decision> <title> [--review auto|user] [--depends ID,ID] [--note TEXT] [--recommend TEXT]
+#          decisions also take --option "A|text" (repeatable, keys A..Z) and --recommend-key K
+#        herdmaster-board.sh set-options <id> --option "A|text" [--option "B|text"] [--recommend-key K]
 #        herdmaster-board.sh status <id> <state>
 #        herdmaster-board.sh attempt <id> <status> [feedback] [link]
 #        herdmaster-board.sh supersede <id>
@@ -49,8 +51,30 @@ valid_state() {
   esac
 }
 
+options_json() {
+  local raw=$1 rkey=$2 out
+  out=$(jq -cn --arg raw "$raw" --arg rkey "$rkey" '
+    ($raw | split("\n") | map(select(length > 0))
+      | map(index("|") as $i | if $i == null then error("bad") else {key: .[:$i], text: (.[$i + 1:] | sub("^ +| +$"; ""; "g"))} end)) as $o
+    | if ($o | length) == 0 then error("none")
+      elif ($o | any(.key | test("^[A-Z]$") | not)) then error("key")
+      elif ($o | any(.text == "")) then error("text")
+      elif ($o | map(.key) | (unique | length) != length) then error("dup")
+      elif $rkey != "" and ($o | any(.key == $rkey) | not) then error("rkey")
+      else $o | map(. + {recommended: (.key == $rkey)}) end' 2>&1) || case $out in
+    *rkey*) die "--recommend-key must match an option key" ;;
+    *bad*) die "--option must look like KEY|text" ;;
+    *key*) die "--option key must be a single letter A-Z" ;;
+    *text*) die "--option text must not be empty" ;;
+    *dup*) die "--option keys must be unique" ;;
+    *none*) die "at least one --option is required" ;;
+    *) die "invalid options" ;;
+  esac
+  printf '%s\n' "$out"
+}
+
 cmd_add() {
-  local kind=${1:-} title=${2:-} review="" deps="" note="" rec=""
+  local kind=${1:-} title=${2:-} review="" deps="" note="" rec="" opts="" rkey=""
   [[ $kind == task || $kind == decision ]] || die "add: kind must be task or decision"
   [[ -n $title ]] || die "add: title required"
   shift 2
@@ -60,6 +84,8 @@ cmd_add() {
       --depends) deps=${2:-}; shift 2 ;;
       --note) note=${2:-}; shift 2 ;;
       --recommend) rec=${2:-}; shift 2 ;;
+      --option) opts+=${2:-}$'\n'; shift 2 ;;
+      --recommend-key) rkey=${2:-}; shift 2 ;;
       *) die "add: unknown argument $1" ;;
     esac
   done
@@ -67,13 +93,16 @@ cmd_add() {
     if [[ $kind == decision ]]; then review=user; else review=auto; fi
   fi
   [[ $review == auto || $review == user ]] || die "add: --review must be auto or user"
-  local board dep_json
+  [[ -z $opts && -z $rkey ]] || [[ $kind == decision ]] || die "add: --option only applies to decisions"
+  [[ -z $rkey || -n $opts ]] || die "add: --recommend-key needs --option"
+  local board dep_json opt_json='[]'
+  [[ -z $opts ]] || opt_json=$(options_json "$opts" "$rkey")
   board=$(load)
   dep_json=$(jq -cn --arg d "$deps" '$d | split(",") | map(select(length > 0))')
   jq -e --argjson d "$dep_json" '. as $b | $d | all(. as $x | $b.entries | any(.id == $x))' <<<"$board" >/dev/null \
     || die "add: --depends names an unknown id"
   local out
-  out=$(jq --arg kind "$kind" --arg title "$title" --arg review "$review" --argjson deps "$dep_json" --arg note "$note" --arg rec "$rec" --arg ts "$(now)" '
+  out=$(jq --arg kind "$kind" --arg title "$title" --arg review "$review" --argjson deps "$dep_json" --arg note "$note" --arg rec "$rec" --argjson opts "$opt_json" --arg ts "$(now)" '
     (if $kind == "task" then "T" else "D" end) as $p
     | ([.entries[] | select(.id | startswith($p + "-")) | .id[2:] | tonumber] | (max // 0) + 1) as $n
     | ($p + "-" + ("000" + ($n | tostring) | .[-3:])) as $id
@@ -81,10 +110,30 @@ cmd_add() {
         status: (if $kind == "task" then "working" else "open" end),
         review: $review, depends_on: $deps, attempts: [], created: $ts, updated: $ts}
         + (if $note != "" then {note: $note} else {} end)
-        + (if $rec != "" then {recommend: $rec} else {} end)]
+        + (if $rec != "" then {recommend: $rec} else {} end)
+        + (if ($opts | length) > 0 then {options: $opts} else {} end)]
     | {board: ., id: $id}' <<<"$board")
   save "$(jq .board <<<"$out")"
   jq -r .id <<<"$out"
+}
+
+cmd_set_options() {
+  local id=${1:-} opts="" rkey=""
+  [[ -n $id ]] || die "set-options: <id> required"
+  shift
+  while (($#)); do
+    case $1 in
+      --option) opts+=${2:-}$'\n'; shift 2 ;;
+      --recommend-key) rkey=${2:-}; shift 2 ;;
+      *) die "set-options: unknown argument $1" ;;
+    esac
+  done
+  need_entry "$id"
+  load | jq -e --arg id "$id" 'any(.entries[]; .id == $id and .kind == "decision")' >/dev/null \
+    || die "set-options: $id is not a decision"
+  local opt_json; opt_json=$(options_json "$opts" "$rkey")
+  save "$(load | jq --arg id "$id" --argjson o "$opt_json" --arg ts "$(now)" \
+    '.entries |= map(if .id == $id then .options = $o | .updated = $ts else . end)')"
 }
 
 cmd_status() {
@@ -213,7 +262,8 @@ cmd_count() {
 cmd_show() {
   load | jq -r '.entries[] | "\(.id)\t\(.status)\t\(.review)\t\(.title)"
     + (if (.depends_on | length) > 0 then "\t<- " + (.depends_on | join(",")) else "" end)
-    + (if (.flags // []) | length > 0 then "\t[" + (.flags | join(",")) + "]" else "" end)'
+    + (if (.flags // []) | length > 0 then "\t[" + (.flags | join(",")) + "]" else "" end)
+    + ((.options // []) | map("\n    \(.key)) \(.text)" + (if .recommended then "  (recommended)" else "" end)) | join(""))'
 }
 
 legacy_open_json() {
@@ -289,6 +339,7 @@ cmd_import_legacy() {
 sub=${1:-}; shift || true
 case $sub in
   add) cmd_add "$@" ;;
+  set-options) cmd_set_options "$@" ;;
   status) cmd_status "$@" ;;
   attempt) cmd_attempt "$@" ;;
   supersede) cmd_supersede "$@" ;;
@@ -298,5 +349,5 @@ case $sub in
   archive) cmd_archive ;;
   count) cmd_count ;;
   show) cmd_show ;;
-  *) sed -n '2,12p' "$0"; exit 2 ;;
+  *) sed -n '2,14p' "$0"; exit 2 ;;
 esac

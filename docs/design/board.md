@@ -31,6 +31,7 @@ Top level: `schema_version` and `entries[]`. Viewers ignore unknown fields.
 | `depends_on` | List of entry ids |
 | `note` | Optional one or two lines of context shown under the title |
 | `recommend` | Optional, for decisions: the planner's recommended answer and why |
+| `options` | Optional, for decisions: `[{"key": "A", "text": "...", "recommended": true}]`; keys are unique single letters A-Z, at most one recommended. `recommend` stays the reason. Boards without `options` keep working and render the note only |
 | `release_when_done` | Optional task boolean; when true the orchestrator takes the task to the project's release step once it is done |
 | `attempts[]` | Each: `status`, `feedback`, PR or pane link |
 | `created`, `updated` | ISO 8601 timestamps |
@@ -67,6 +68,8 @@ Top level: `schema_version` and `entries[]`. Viewers ignore unknown fields.
   ]
 }
 ```
+
+Set options with `herdmaster-board.sh add decision "Sidebar or top nav" --note "..." --recommend "why" --option "A|Sidebar" --option "B|Top nav" --recommend-key B`. `herdmaster-board.sh set-options D-007 --option "A|Sidebar" --option "B|Top nav" [--recommend-key B]` replaces the options of an existing decision; `show` prints them under the entry.
 
 ## Lifecycles
 

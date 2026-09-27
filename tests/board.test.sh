@@ -28,6 +28,25 @@ n=$("$B" add decision "Pick one" --note "Because X" --recommend "Yes, because Y"
 eq "$(jq -r --arg n "$n" '.entries[] | select(.id == $n) | .note + "|" + .recommend' "$f")" "Because X|Yes, because Y"
 "$B" status "$n" settled
 
+o=$("$B" add decision "Pick layout" --note "Context" --recommend "Fewest clicks" --option "A|Sidebar" --option "B|Top nav" --option "C|Both" --recommend-key B)
+eq "$(jq -c --arg o "$o" '.entries[] | select(.id == $o) | [.options[] | [.key, .text, .recommended]]' "$f")" '[["A","Sidebar",false],["B","Top nav",true],["C","Both",false]]'
+eq "$(jq -r --arg n "$n" '.entries[] | select(.id == $n) | .options // "none"' "$f")" none
+for bad in "--option x" "--option a|x" "--option AB|x" "--option A|" "--option A|x --option A|y" "--option A|x --recommend-key Z" "--recommend-key A"; do
+  eval "\"\$B\" add decision Bad $bad" 2>/dev/null && { echo "FAIL: accepted '$bad'" >&2; exit 1; }
+done
+"$B" add task Bad --option "A|x" 2>/dev/null && { echo "FAIL: task with options" >&2; exit 1; }
+eq "$(jq '.entries | length' "$f")" 5
+"$B" set-options "$o" --option "A|One" --option "D|Four" --recommend-key D
+eq "$(jq -c --arg o "$o" '.entries[] | select(.id == $o) | [.options[] | .key + (if .recommended then "*" else "" end)]' "$f")" '["A","D*"]'
+"$B" set-options "$n" --option "A|Late" --option "B|Later"
+eq "$(jq -c --arg n "$n" '.entries[] | select(.id == $n) | .options | length' "$f")" 2
+"$B" set-options "$o" 2>/dev/null && { echo "FAIL: empty set-options" >&2; exit 1; }
+"$B" set-options "$o" --option "A|x" --option "A|y" 2>/dev/null && { echo "FAIL: dup set-options" >&2; exit 1; }
+"$B" set-options "$t1" --option "A|x" 2>/dev/null && { echo "FAIL: set-options on task" >&2; exit 1; }
+"$B" set-options D-999 --option "A|x" 2>/dev/null && { echo "FAIL: set-options unknown id" >&2; exit 1; }
+eq "$("$B" show | grep -A2 "^$o")" "$(printf '%s\topen\tuser\tPick layout\n    A) One\n    D) Four  (recommended)' "$o")"
+"$B" status "$o" settled
+
 first=$("$B" count)
 [[ $first == "Board: 1 in review (oldest 0m), 1 flagged" ]] || { echo "FAIL: count '$first'" >&2; exit 1; }
 eq "$("$B" count)" ""

@@ -6,7 +6,8 @@
 #        herdmaster-board.sh set-review <task id> [--summary S] [--diff D] [--tests T] [--preview URL] [--screenshot PATH]... [--link "label|url"]...
 #        herdmaster-board.sh set-options <id> --option "A|text" [--option "B|text"] [--recommend-key K]
 #        herdmaster-board.sh status <id> <state> [answer]     (answer only when settling a decision)
-#        herdmaster-board.sh settle <id> --answer <key>       (open decision; answer = that option's text)
+#        herdmaster-board.sh settle <id> --answer <key> [--answer-text TEXT]
+#          (open decision; answer = that option's text, which must equal TEXT if given and not start with merge/deploy/push)
 #        herdmaster-board.sh attempt <id> <status> [feedback] [link]
 #        herdmaster-board.sh supersede <id>
 #        herdmaster-board.sh release-when-done <id> [true|false]
@@ -220,12 +221,13 @@ cmd_status() {
 }
 
 cmd_settle() {
-  local id=${1:-} key=""
+  local id=${1:-} key="" text="" has_text=""
   [[ -n $id ]] || die "settle: <id> --answer <key> required"
   shift
   while (($#)); do
     case $1 in
       --answer) key=${2:-}; shift 2 ;;
+      --answer-text) text=${2:-}; has_text=1; shift 2 ;;
       *) die "settle: unknown argument $1" ;;
     esac
   done
@@ -237,10 +239,14 @@ cmd_settle() {
     || die "settle: $id is not open"
   load | jq -e --arg id "$id" --arg k "$key" 'any(.entries[]; .id == $id and any(.options[]?; .key == $k))' >/dev/null \
     || die "settle: '$key' is not an option of $id"
-  save "$(load | jq --arg id "$id" --arg k "$key" --arg ts "$(now)" '
+  local cur; cur=$(load | jq -c --arg id "$id" --arg k "$key" 'first(.entries[] | select(.id == $id) | .options[] | select(.key == $k)) | .text')
+  [[ -z $has_text ]] || jq -e --argjson c "$cur" --arg t "$text" '$c == $t' <<<null >/dev/null \
+    || die "settle: option $key of $id changed since the answer was recorded"
+  jq -e --argjson c "$cur" '$c | sub("^[\\s\\p{Cc}\\p{Cf}]+"; "") | ascii_downcase | test("^(merge|deploy|push)") | not' <<<null >/dev/null \
+    || die "settle: merge, deploy and push are answered in chat, not settled from an option"
+  save "$(load | jq --arg id "$id" --argjson a "$cur" --arg ts "$(now)" '
     .entries |= map(if .id == $id then
-      (first(.options[] | select(.key == $k)) | .text) as $a
-      | .status = "settled" | .answer = $a | .updated = $ts
+      .status = "settled" | .answer = $a | .updated = $ts
       | if has("note") then .note += "\nAnswer: " + $a else . end
       else . end)')"
 }
@@ -458,5 +464,5 @@ case $sub in
   archive) cmd_archive ;;
   count) cmd_count ;;
   show) cmd_show ;;
-  *) sed -n '2,18p' "$0"; exit 2 ;;
+  *) sed -n '2,19p' "$0"; exit 2 ;;
 esac

@@ -233,7 +233,7 @@ function addNote(r,e){
 function optsOf(e){return Array.isArray(e.options)?e.options.filter(o=>o&&typeof o.key==="string"&&typeof o.text==="string"):[]}
 const NO_BUTTON=/^(merge|deploy|push)/i;
 const pending=new Map(),sent=new Map(),failedAns=new Map();
-function answerable(e,o){return e.kind==="decision"&&e.status==="open"&&!NO_BUTTON.test(o.text.trim())}
+function answerable(e,o){return e.kind==="decision"&&e.status==="open"&&!NO_BUTTON.test(o.text.replace(/^[\s\p{Cc}\p{Cf}]+/u,""))}
 async function answer(e,k){
   const qk=cur+"\n"+e.id;
   let err="Could not send the answer.";
@@ -450,6 +450,7 @@ TOKEN_SLOT = "__HERDMASTER_TOKEN__"
 TOKEN_PATH = "~/.claude/herdmaster/viewer-token"
 BODY_MAX = 4096
 NO_ANSWER_PREFIXES = ("merge", "deploy", "push")
+BLANK_CATS = {"Zs", "Zl", "Zp", "Cc", "Cf"}
 
 
 def read_json(path):
@@ -621,8 +622,16 @@ class AnswerError(Exception):
         self.code, self.msg = code, msg
 
 
+def release_word(text):
+    """Leading whitespace, control and format characters (BOM, zero-width space) are skipped, as the page does."""
+    i = 0
+    while i < len(text) and unicodedata.category(text[i]) in BLANK_CATS:
+        i += 1
+    return text[i:].lower().startswith(NO_ANSWER_PREFIXES)
+
+
 def check_answer(root, fixed, body):
-    """Returns the validated {"project","id","key"} or raises AnswerError(400)."""
+    """Returns the validated {"project","id","key","text"} or raises AnswerError(400)."""
     try:
         doc = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
@@ -645,9 +654,9 @@ def check_answer(root, fixed, body):
     opt = next((o for o in opts if isinstance(o, dict) and o.get("key") == key and isinstance(o.get("text"), str)), None)
     if opt is None:
         raise AnswerError(400, "Unknown option key")
-    if opt["text"].strip().lower().startswith(NO_ANSWER_PREFIXES):
+    if release_word(opt["text"]):
         raise AnswerError(400, "Merge, deploy and push are answered in chat, not from the page")
-    return {"project": project, "id": did, "key": key}
+    return {"project": project, "id": did, "key": key, "text": opt["text"]}
 
 
 def append_answer(root, ans):
@@ -673,6 +682,7 @@ def write_token(token):
 
 
 def make_handler(fixed, root, token):
+    # Ceiling: any local process can GET / (with a loopback Host) and read the token; it guards browser-originated requests only.
     page = PAGE.replace(TOKEN_SLOT, token)
 
     class Handler(BaseHTTPRequestHandler):

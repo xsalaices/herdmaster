@@ -102,6 +102,8 @@ cmd_new_worker() {
   [[ $# -gt 0 ]] || die "new-worker: <launch> required"
   local cur ws tab pane="" cmd slot kind a b c
   cmd=$(launch_cmd worker "$@")
+  local master; master=$(master_name)
+  cmd="HERDMASTER_ROLE=worker HERDMASTER_MASTER=$(printf '%q' "$master") $cmd"
   [[ -n $cwd ]] && cmd="cd $(printf '%q' "$cwd") && $cmd"
   cur=$(current_pane_json); ws=$(jq -r .workspace_id <<<"$cur"); tab=$(jq -r .tab_id <<<"$cur")
 
@@ -112,9 +114,8 @@ cmd_new_worker() {
     newtab) pane=$(mut_json .result.root_pane.pane_id "<new-pane>" tab create --workspace "$ws" --label "$a" --no-focus) ;;
   esac
 
-  local master; master=$(master_name)
   mut pane rename "$pane" "$label" >&2
-  mut pane run "$pane" "HERDMASTER_ROLE=worker HERDMASTER_MASTER=$(printf '%q' "$master") $cmd" >&2
+  mut pane run "$pane" "$cmd" >&2
   if (( DRY )); then cmd_rebalance >&2; else cmd_rebalance "$pane" >&2; fi
   echo "$pane"
 }
@@ -126,10 +127,11 @@ cmd_new_orchestrator() {
   [[ $# -gt 0 ]] || die "new-orchestrator: <launch> required"
   local pane master cmd; master=$(master_name)
   cmd=$(launch_cmd orchestrator "$@")
+  cmd="HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=$(printf '%q' "$master") $cmd"
   [[ -n $cwd ]] && cmd="cd $(printf '%q' "$cwd") && $cmd"
   pane=$(mut_json .result.pane.pane_id "<new-pane>" pane split --current --direction right --no-focus)
   mut pane rename "$pane" orchestrator >&2
-  mut pane run "$pane" "HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=$(printf '%q' "$master") $cmd" >&2
+  mut pane run "$pane" "$cmd" >&2
   record_workspace >&2
   echo "$pane"
 }

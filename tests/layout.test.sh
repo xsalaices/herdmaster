@@ -35,9 +35,9 @@ has "$out" "pane resize --pane pane-b --direction left --amount 0.2500"
 
 export FAKE_TABS='[{"tab_id":"tab-1","workspace_id":"ws-1","label":"1","pane_count":2}]'
 out=$("$L" --dry-run new-worker build --cwd "/tmp/my project" echo hi 2>&1)
-has "$out" 'cd /tmp/my\ project && echo hi'
+has "$out" 'cd /tmp/my\ project && HERDMASTER_ROLE=worker HERDMASTER_MASTER=planner-1 echo hi'
 out=$("$L" --dry-run new-worker build --cwd /tmp/work --tier default '/orchestrator demo' 2>&1)
-has "$out" 'cd /tmp/work && env -u ANTHROPIC_API_KEY claude'
+has "$out" 'cd /tmp/work && HERDMASTER_ROLE=worker HERDMASTER_MASTER=planner-1 env -u ANTHROPIC_API_KEY claude'
 has "$out" '/orchestrator\ demo'
 out=$("$L" --dry-run new-worker build echo hi 2>&1)
 lacks "$out" "cd /tmp"
@@ -64,7 +64,11 @@ has "$out" "pane rename <new-pane> orchestrator"
 has "$out" "HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=planner-1 claude hi"
 
 out=$("$L" --dry-run new-orchestrator --cwd /tmp/work claude hi 2>&1)
-has "$out" "cd /tmp/work && claude hi"
+has "$out" "cd /tmp/work && HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=planner-1 claude hi"
+
+out=$("$L" --dry-run new-orchestrator --cwd /tmp/work --tier default '/orchestrator demo' 2>&1)
+has "$out" 'cd /tmp/work && HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=planner-1 env -u ANTHROPIC_API_KEY claude'
+has "$out" '/orchestrator\ demo'
 
 has "$("$L" --dry-run new-orchestrator claude hi 2>&1)" "settings set herdr_workspace ws-1"
 [[ ! -f $T/.claude/orchestrator/demo/settings.json ]] || { echo "FAIL: dry-run wrote settings" >&2; exit 1; }

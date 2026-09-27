@@ -7,12 +7,16 @@
 #        herdmaster-board.sh set-options <id> --option "A|text" [--option "B|text"] [--recommend-key K]
 #        herdmaster-board.sh status <id> <state> [answer]     (answer only when settling a decision)
 #        herdmaster-board.sh settle <id> --answer <key> [--answer-text TEXT] [--answer-at TIMESTAMP]
-#          (open decision; answer = that option's text, which must equal TEXT if given, must not contain
-#           merge/deploy/push as a UX-only best-effort check (never a security boundary; see below), and
-#           if --answer-at is given, the decision's own 'updated' must not be newer than TIMESTAMP)
+#          (open decision; answer = that option's text, which must equal TEXT if given; the option's text
+#           and the decision's own title and note must not contain merge/deploy/push or a bidirectional
+#           control character, as a UX-only speed bump with no security value -- it cannot catch paraphrases
+#           or look-alikes, see below; and if --answer-at is given, the decision's own 'updated' must not be
+#           newer than TIMESTAMP)
 #        herdmaster-board.sh consume-answers <project>
 #          (atomically claims answers.jsonl, settles or refuses each line, moves all of them to
-#           answers.done.jsonl, prints a settled/refused summary; never loses a concurrently-appended line)
+#           answers.done.jsonl, prints a settled/refused/unparseable summary; a line that isn't even a JSON
+#           object is recorded as unparseable rather than aborting the run; never loses a concurrently-
+#           appended line)
 #        herdmaster-board.sh attempt <id> <status> [feedback] [link]
 #        herdmaster-board.sh supersede <id>
 #        herdmaster-board.sh release-when-done <id> [true|false]
@@ -256,15 +260,33 @@ cmd_settle() {
     jq -e -n --arg u "$updated" --arg a "$at" '($u | fromdateiso8601) <= ($a | fromdateiso8601)' >/dev/null \
       || die "settle: $id changed after the answer was recorded"
   fi
-  # UX-only best-effort check, never a security boundary (see the block comment near the top of this file
-  # and roles/orchestrator.md): NFKC-normalize is not available in jq, so this is a coarser pass than the
-  # Python/JS uxReleaseWord -- same word list, casefold and strip-then-search-anywhere approach, applied
-  # to what jq's regex engine can reach (Cc/Cf/Zs/Zl/Zp/Mn categories plus the specific filler codepoints
-  # U+3164, U+FFA0, U+2800). Keep the word list in sync if it ever changes.
-  jq -e --argjson c "$cur" '
-    ($c | gsub("[\\s\\p{Cc}\\p{Cf}\\p{Zs}\\p{Zl}\\p{Zp}\\p{Mn}ㅤﾠ⠀]"; "") | ascii_downcase) as $n
-    | ["merge", "deploy", "push"] | any(. as $w | $n | contains($w)) | not' <<<null >/dev/null \
-    || die "settle: merge, deploy and push are answered in chat, not settled from an option"
+  # UX-only best-effort check, no security value whatsoever (see the block comment near the top of this
+  # file and roles/orchestrator.md): looks for merge/deploy/push (NFKC-normalize is not available in jq, so
+  # this is a coarser pass than the Python/JS check -- same word list, casefold and strip-then-search-
+  # anywhere approach, applied to what jq's regex engine can reach: Cc/Cf/Zs/Zl/Zp/Mn categories plus the
+  # specific filler codepoints U+3164, U+FFA0, U+2800) and, separately and never stripped away first,
+  # bidirectional control characters (U+202A-U+202E, U+2066-U+2069) -- these are rejected outright, not
+  # stripped and allowed through, since they are exactly what would let a look-alike answer render safely
+  # while executing as something else. The same two checks run against the decision's own title and note:
+  # if either is blocked, every option of that decision is refused, not only the option the text check
+  # would otherwise catch. None of this can catch paraphrases or convincing look-alikes, and it never
+  # authorizes a merge, deploy, push or anything irreversible by itself -- only a human, or the
+  # orchestrator's own judgment against context, does that (see roles/orchestrator.md). Keep the word list
+  # and both approaches in sync with the page's JS and its own check here.
+  local etitle enote
+  etitle=$(load | jq -r --arg id "$id" 'first(.entries[] | select(.id == $id)) | .title // ""')
+  enote=$(load | jq -r --arg id "$id" 'first(.entries[] | select(.id == $id)) | .note // ""')
+  check_release_word() {
+    local v=$1 what=$2
+    jq -e -n --arg v "$v" '
+      (($v | test("[\u202A-\u202E\u2066-\u2069]"))
+        or (($v | gsub("[\\s\\p{Cc}\\p{Cf}\\p{Zs}\\p{Zl}\\p{Zp}\\p{Mn}ㅤﾠ⠀]"; "") | ascii_downcase) as $n
+          | ["merge", "deploy", "push"] | any(. as $w | $n | contains($w)))) | not' <<<null >/dev/null \
+      || die "settle: $what"
+  }
+  check_release_word "$etitle" "the decision's title contains merge, deploy, push or a directional control character; answer in chat, not from an option"
+  check_release_word "$enote" "the decision's note contains merge, deploy, push or a directional control character; answer in chat, not from an option"
+  check_release_word "$cur" "merge, deploy, push and directional control characters are answered in chat, not settled from an option"
   save "$(load | jq --arg id "$id" --argjson a "$cur" --arg ts "$(now)" '
     .entries |= map(if .id == $id then
       .status = "settled" | .answer = $a | .updated = $ts
@@ -275,20 +297,28 @@ cmd_settle() {
 # Consumes the current answers.jsonl for a project, settling each line via cmd_settle (jq-driven, values
 # always passed through --arg/--argjson, never interpolated into a shell string that gets re-parsed).
 # Renames answers.jsonl to a timestamped .processing file first so a concurrent POST /answer appends to a
-# fresh answers.jsonl instead, and every line -- settled or refused -- moves to answers.done.jsonl, so a
-# line skipped because its decision wasn't open is never reconsidered from a live file (see fix 7 above:
-# settle's --answer-at guards against a decision that was reopened and changed after the answer was sent).
+# fresh answers.jsonl instead, and every line -- settled, refused or unparseable -- moves to
+# answers.done.jsonl, so a line skipped because its decision wasn't open is never reconsidered from a live
+# file (see fix 7 above: settle's --answer-at guards against a decision that was reopened and changed after
+# the answer was sent). A line that isn't even a JSON object (a corrupt append, a partial write) is
+# recorded as unparseable and the run continues with the next line, rather than aborting the whole batch.
 cmd_consume_answers() {
   local project=${1:-}
   [[ -n $project ]] || die "consume-answers: <project> required"
   [[ $project == "$HERDMASTER_PROJECT" ]] || die "consume-answers: <project> must match \$HERDMASTER_PROJECT"
   local live="$DIR/answers.jsonl" done_file="$DIR/answers.done.jsonl"
-  [[ -f $live ]] || { echo "settled 0, refused 0"; return 0; }
+  [[ -f $live ]] || { echo "settled 0, refused 0, unparseable 0"; return 0; }
   local claim="$DIR/answers.$(date -u +%Y%m%dT%H%M%S).$$.$RANDOM.processing"
   mv "$live" "$claim"
-  local settled=0 refused=0 reasons=()
+  local settled=0 refused=0 unparseable=0 reasons=()
   while IFS= read -r line || [[ -n $line ]]; do
     [[ -n $line ]] || continue
+    if ! jq -e 'type == "object"' <<<"$line" >/dev/null 2>&1; then
+      unparseable=$((unparseable + 1))
+      echo "herdmaster-board: consume-answers: skipping unparseable line: ${line:0:200}" >&2
+      jq -cn --arg raw "${line:0:2000}" --arg ts "$(now)" '{raw: $raw, result: "unparseable", at: $ts}' >> "$done_file"
+      continue
+    fi
     local lproj lid lkey ltext lat result reason=""
     lproj=$(jq -r '.project // empty' <<<"$line" 2>/dev/null) || lproj=""
     lid=$(jq -r '.id // empty' <<<"$line" 2>/dev/null) || lid=""
@@ -313,7 +343,7 @@ cmd_consume_answers() {
   done < "$claim"
   chmod 600 "$done_file" 2>/dev/null || true
   rm -f "$claim"
-  echo "settled $settled, refused $refused"
+  echo "settled $settled, refused $refused, unparseable $unparseable"
   ((refused == 0)) || printf 'refused: %s\n' "${reasons[@]}"
 }
 

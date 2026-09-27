@@ -142,7 +142,7 @@ function row(e,cls,label,past){
     const n=$("div","note",e.note);r.append(n);
     const open=openNotes.has(e.id);if(!open)n.classList.add("clamp");
     const b=$("button","exp",open?"Show less":"Show more");b.type="button";b.setAttribute("aria-expanded",open);b.hidden=!open;
-    b.onclick=()=>{if(openNotes.has(e.id))openNotes.delete(e.id);else openNotes.add(e.id);last="";tick()};r.append(b);
+    b.onclick=()=>{if(openNotes.has(e.id))openNotes.delete(e.id);else openNotes.add(e.id);last="";paint()};r.append(b);
     if(!open)clampChecks.push([n,b]);
   }
   if(os.length){
@@ -174,7 +174,7 @@ function render(b){
   const d=$("details"),s=$("summary","","Done");s.append(" ",$("span","n",past.length));d.append(s);d.open=pastOpen;
   d.ontoggle=()=>{pastOpen=d.open;fitNotes()};
   past.slice(0,showAll?past.length:prefs.done).forEach(e=>d.append(row(e,"working",e.status==="cancelled"?"cancelled":"done",true)));
-  if(past.length>prefs.done){const m=$("button","more",showAll?"show fewer":"show all "+past.length);m.type="button";m.onclick=()=>{showAll=!showAll;last="";tick()};d.append(m)}
+  if(past.length>prefs.done){const m=$("button","more",showAll?"show fewer":"show all "+past.length);m.type="button";m.onclick=()=>{showAll=!showAll;last="";paint()};d.append(m)}
   pe.replaceChildren(d);fitNotes();
 }
 let last="",lastPanel="",tabs=[],fixed=true,cur=null,picked=false,seen;
@@ -195,7 +195,7 @@ function renderPanel(){
   if(key===lastPanel)return;lastPanel=key;
   const hd=$("div","hd");hd.append($("div","ttl","Settings"),$("p","sub","Display options are saved in this browser."));
   const rows=[setRow("Theme",seg([["auto","Auto"],["light","Light"],["dark","Dark"]],prefs.theme,v=>setPref("theme",v),"Theme")),
-    setRow("Done items shown",sel([5,10,25,50].map(n=>[n,n]),String(prefs.done),v=>{setPref("done",+v);last="";tick()},"Done items shown"))];
+    setRow("Done items shown",sel([5,10,25,50].map(n=>[n,n]),String(prefs.done),v=>{setPref("done",+v);last="";paint()},"Done items shown"))];
   if(!fixed&&tabs.length>1)rows.push(setRow("Follow herdr",seg([[true,"On"],[false,"Off"]],prefs.follow,v=>{setPref("follow",v);seen=undefined;follow()},"Follow herdr")));
   if(!fixed&&tabs.length>1)rows.push(setRow("Opens first",sel([["","Most decisions"],...tabs.map(t=>[t.name,t.name])],prefs.tab,v=>setPref("tab",v),"Opens first")));
   const sh=$("h3","","Project"+(ctx.suffix?" "+ctx.suffix.trim():""));
@@ -212,34 +212,54 @@ function renderTabs(){
   nav.replaceChildren(...tabs.map(p=>{
     const b=$("button","",p.name);b.type="button";b.setAttribute("role","tab");b.setAttribute("aria-selected",p.name===cur);
     if(p.needed>0){b.append($("span","badge",p.needed));b.title=p.needed+" decision"+(p.needed>1?"s":"")+" needed"}
-    b.onclick=()=>{cur=p.name;picked=true;last="";tick()};return b;
+    b.onclick=()=>select(p.name);return b;
   }));
 }
-async function tick(){
+let cache=null,cacheTxt="",errs={},failed=false,loading=new Set();
+function paint(){
+  if(!cache)return;
   const note=document.getElementById("note");
-  try{
-    const pr=await fetch("/projects.json",{cache:"no-store"});
-    const pj=await pr.json();
-    fixed=pj.fixed;tabs=pj.projects;
-    if(!tabs.some(p=>p.name===cur))picked=false;
-    if(!picked)cur=tabs.find(p=>p.name===prefs.tab)?.name||tabs.reduce((m,p)=>!m||p.needed>m.needed?p:m,null)?.name||null;
-    ctx.suffix=!fixed&&tabs.length>1?" ("+cur+")":"";
-    renderTabs();
-    if(cur===null&&!fixed){note.textContent="No boards yet.";document.getElementById("board").replaceChildren();document.getElementById("past").replaceChildren();return}
-    const q=fixed?"":"?project="+encodeURIComponent(cur);
-    const [r,sr]=await Promise.all([fetch("/tasks.json"+q,{cache:"no-store"}),fetch("/settings.json"+q,{cache:"no-store"})]);
-    const txt=await r.text();
-    if(!r.ok){let m="Board unavailable";try{m=JSON.parse(txt).error||m}catch(_){}
-      note.textContent=m;return}
-    let b;try{b=JSON.parse(txt)}catch(_){note.textContent="Board file is not valid JSON. Showing the last good view.";return}
-    try{const st=await sr.json();ctx.settings=st&&typeof st==="object"&&!Array.isArray(st)?st:{}}catch(_){ctx.settings={}}
-    ctx.word=["merge","deploy","push","ship"].includes(ctx.settings.release)?ctx.settings.release:"deploy";
-    renderPanel();
-    note.textContent="";
-    const key=cur+"\n"+ctx.word+"\n"+ctx.suffix+"\n"+prefs.done+"\n"+showAll+"\n"+txt;
-    if(key!==last){last=key;render(b)}
-  }catch(_){note.textContent="Viewer server unreachable. Retrying."}
+  fixed=cache.fixed;tabs=cache.projects;
+  if(!tabs.some(p=>p.name===cur))picked=false;
+  if(!picked)cur=tabs.find(p=>p.name===prefs.tab)?.name||tabs.reduce((m,p)=>!m||p.needed>m.needed?p:m,null)?.name||null;
+  ctx.suffix=!fixed&&tabs.length>1?" ("+cur+")":"";
+  renderTabs();
+  if(cur===null&&!fixed){note.textContent="No boards yet.";document.getElementById("board").replaceChildren();document.getElementById("past").replaceChildren();return}
+  const st=cache.settings[cur];
+  ctx.settings=st&&typeof st==="object"&&!Array.isArray(st)?st:{};
+  ctx.word=["merge","deploy","push","ship"].includes(ctx.settings.release)?ctx.settings.release:"deploy";
+  renderPanel();
+  const b=cache.boards[cur];
+  if(b===undefined||(b===null&&errs[cur]===undefined)){loadProject(cur);if(b===undefined)return}
+  if(b===null){note.textContent=errs[cur]||"Board unavailable";return}
+  note.textContent="";
+  const key=cur+"\n"+ctx.word+"\n"+ctx.suffix+"\n"+prefs.done+"\n"+showAll+"\n"+JSON.stringify(b);
+  if(key!==last){last=key;render(b)}
 }
+async function loadProject(name){
+  if(loading.has(name))return;
+  loading.add(name);
+  const q=fixed?"":"?project="+encodeURIComponent(name),c=cache;
+  try{
+    const [r,sr]=await Promise.all([fetch("/tasks.json"+q,{cache:"no-store"}),fetch("/settings.json"+q,{cache:"no-store"})]);
+    const txt=await r.text();let b=null;
+    if(r.ok){try{b=JSON.parse(txt);delete errs[name]}catch(_){errs[name]="Board file is not valid JSON. Showing the last good view."}}
+    else{let m="Board unavailable";try{m=JSON.parse(txt).error||m}catch(_){}errs[name]=m}
+    let st={};try{st=await sr.json()}catch(_){}
+    if(cache===c){cache.boards[name]=b;cache.settings[name]=st;if(cur===name)paint()}
+  }catch(_){}
+  finally{loading.delete(name)}
+}
+async function poll(){
+  try{
+    const txt=await(await fetch("/all.json",{cache:"no-store"})).text();
+    const was=failed;failed=false;
+    if(txt===cacheTxt&&!was)return;
+    cache=JSON.parse(txt);cacheTxt=txt;errs={};
+    paint();
+  }catch(_){failed=true;document.getElementById("note").textContent="Viewer server unreachable. Retrying."}
+}
+function select(name){cur=name;picked=true;last="";paint();poll()}
 const cog=document.getElementById("cog"),panel=document.getElementById("panel");
 function togglePanel(open){panel.hidden=!open;cog.setAttribute("aria-expanded",open)}
 cog.onclick=()=>togglePanel(panel.hidden);
@@ -251,10 +271,11 @@ async function follow(){
     const f=await(await fetch("/focus.json",{cache:"no-store"})).json(),p=f&&f.project||null;
     if(p===seen)return;
     seen=p;
-    if(p&&tabs.some(t=>t.name===p)&&p!==cur){cur=p;picked=true;last="";tick()}
+    if(p&&!tabs.some(t=>t.name===p))await poll();
+    if(p&&tabs.some(t=>t.name===p)&&p!==cur)select(p)
   }catch(_){}
 }
-tick().then(follow);setInterval(tick,3000);setInterval(follow,500);
+poll().then(follow);setInterval(poll,3000);setInterval(follow,500);
 </script></body></html>
 """
 
@@ -294,6 +315,25 @@ def project_settings(root, project):
     except (OSError, ValueError):
         return {}
     return doc if isinstance(doc, dict) else {}
+
+
+def read_board(root, project):
+    try:
+        doc = read_json(os.path.join(root, project, "tasks.json"))
+    except (OSError, ValueError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def all_boards(fixed, root):
+    if fixed:
+        projects = [{"name": fixed, "needed": open_decisions(os.path.join(root, fixed, "tasks.json"))}]
+    else:
+        projects = list_projects(root)
+    names = [p["name"] for p in projects]
+    return {"fixed": bool(fixed), "projects": projects,
+            "boards": {n: read_board(root, n) for n in names},
+            "settings": {n: project_settings(root, n) for n in names}}
 
 
 HERDR_BIN = os.environ.get("HERDR_BIN", "herdr")
@@ -361,6 +401,8 @@ def make_handler(fixed, root):
                 else:
                     projects = list_projects(root)
                 self._send(200, json.dumps({"fixed": bool(fixed), "projects": projects}), "application/json")
+            elif route == "/all.json":
+                self._send(200, json.dumps(all_boards(fixed, root)), "application/json")
             elif route == "/focus.json":
                 ws = focused_workspace()
                 self._send(200, json.dumps({"project": focused_project(root, ws), "workspace": ws}), "application/json")

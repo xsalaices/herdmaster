@@ -62,6 +62,34 @@ done
 [[ $(code "$B/tasks.json?project=empty") == 404 ]] || fail "project without board should be 404"
 [[ $(curl -s "$B/projects.json" | jq '.projects | map(.name) | index("empty")') == null ]] || fail "empty dir listed"
 [[ $(code -X POST "$B/tasks.json?project=beta") == 405 ]] || fail "multi POST should be 405"
+[[ $(curl -s "$B/all.json" | jq -c '[.fixed, (.projects | map(.name)), (.boards | keys), (.settings | keys)]') == '[false,["alpha","beta","demo"],["alpha","beta","demo"],["alpha","beta","demo"]]' ]] || fail "all.json shape"
+[[ $(curl -s "$B/all.json" | jq -c '[.projects[] | "\(.name):\(.needed)"]') == '["alpha:1","beta:2","demo:0"]' ]] || fail "all.json needed"
+[[ $(curl -s "$B/all.json" | jq '.boards.beta.entries | length') == 3 ]] || fail "all.json board content"
+[[ $(curl -s "$B/all.json" | jq -c '[.settings.beta.release, .settings.alpha, .boards.alpha.entries[0].options[1].key]') == '["ship",{},"B"]' ]] || fail "all.json settings"
+cp "$O/beta/tasks.json" "$T/beta.bak"
+echo '{bad' > "$O/beta/tasks.json"
+[[ $(curl -s "$B/all.json" | jq -c '[.boards.beta, (.projects | map(.name))]') == '[null,["alpha","beta","demo"]]' ]] || fail "all.json invalid board is null"
+cp "$T/beta.bak" "$O/beta/tasks.json"
+[[ $(code "$B/all.json") == 200 ]] || fail "all.json 200"
+[[ $(code -X POST "$B/all.json") == 405 ]] || fail "all.json POST should be 405"
+[[ $(code -X DELETE "$B/all.json") == 405 ]] || fail "all.json DELETE should be 405"
+[[ $(curl -s "http://127.0.0.1:$PORT/all.json" | jq -c '[.fixed, (.boards | keys), (.settings | keys)]') == '[true,["demo"],["demo"]]' ]] || fail "all.json fixed mode"
+[[ $(curl -s "$B/all.json" | jq '.boards | has("empty")') == false ]] || fail "all.json lists only real boards"
+[[ $(curl -s "$B/all.json?project=../x" | jq -c '.boards | keys') == '["alpha","beta","demo"]' ]] || fail "all.json ignores project query"
+curl -s "$B/" | python3 -c '
+import re, sys
+js = sys.stdin.read()
+m = re.search(r"function select\(name\)\{(.*?)\}\n", js, re.S)
+assert m, "select handler missing"
+body = m.group(1)
+assert "paint()" in body and "await" not in body, "click path must be synchronous"
+assert body.index("paint()") < body.index("poll()"), "paint before background refresh"
+assert "onclick=()=>select(p.name)" in js, "tab click must call select"
+pm = re.search(r"function paint\(\)\{(.*?)\nasync function loadProject", js, re.S)
+assert pm and "await" not in pm.group(1) and "fetch(" not in pm.group(1), "paint must not await or fetch"
+assert "if(txt===cacheTxt&&!was)return" in js, "unchanged poll must skip render"
+assert "select(p)" in js, "follow switch must use select"
+' || fail "instant tab click path"
 curl -s "$B/" | grep -q 'Ready to ' || fail "ready label"
 [[ $(curl -s "http://127.0.0.1:$PORT/projects.json" | jq -c '[.fixed, (.projects | map(.name))]') == '[true,["demo"]]' ]] || fail "fixed mode projects"
 echo '{"herdr_workspace":"w11"}' > "$O/beta/settings.json"

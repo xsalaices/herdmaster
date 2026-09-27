@@ -6,6 +6,17 @@
 #        herdmaster-board.sh set-review <task id> [--summary S] [--diff D] [--tests T] [--preview URL] [--screenshot PATH]... [--link "label|url"]...
 #        herdmaster-board.sh set-options <id> --option "A|text" [--option "B|text"] [--recommend-key K]
 #        herdmaster-board.sh status <id> <state> [answer]     (answer only when settling a decision)
+#        herdmaster-board.sh settle <id> --answer <key> [--answer-text TEXT] [--answer-at TIMESTAMP]
+#          (open decision; answer = that option's text, which must equal TEXT if given; the option's text
+#           and the decision's own title and note must not contain merge/deploy/push or a bidirectional
+#           control character, as a UX-only speed bump with no security value -- it cannot catch paraphrases
+#           or look-alikes, see below; and if --answer-at is given, the decision's own 'updated' must not be
+#           newer than TIMESTAMP)
+#        herdmaster-board.sh consume-answers <project>
+#          (atomically claims answers.jsonl, settles or refuses each line, moves all of them to
+#           answers.done.jsonl, prints a settled/refused/unparseable summary; a line that isn't even a JSON
+#           object is recorded as unparseable rather than aborting the run; never loses a concurrently-
+#           appended line)
 #        herdmaster-board.sh attempt <id> <status> [feedback] [link]
 #        herdmaster-board.sh supersede <id>
 #        herdmaster-board.sh release-when-done <id> [true|false]
@@ -14,6 +25,8 @@
 #        herdmaster-board.sh import-legacy
 #        herdmaster-board.sh archive
 #        herdmaster-board.sh count | show
+# A settled decision or an answers.jsonl line NEVER by itself authorizes merge, deploy or push: those
+# still require the master's explicit instruction on the owner's word (see roles/orchestrator.md).
 # Project comes from $HERDMASTER_PROJECT. Single writer (the orchestrator); no lock, so concurrent writers can lose updates.
 set -euo pipefail
 
@@ -216,6 +229,122 @@ cmd_status() {
   save "$(load | jq --arg id "$id" --arg s "$state" --arg a "$answer" --arg ts "$(now)" \
     '.entries |= map(if .id == $id then .status = $s | .updated = $ts
       | if $a != "" then .answer = $a else . end else . end)')"
+}
+
+cmd_settle() {
+  local id=${1:-} key="" text="" has_text="" at="" has_at=""
+  [[ -n $id ]] || die "settle: <id> --answer <key> required"
+  shift
+  while (($#)); do
+    case $1 in
+      --answer) key=${2:-}; shift 2 ;;
+      --answer-text) text=${2:-}; has_text=1; shift 2 ;;
+      --answer-at) at=${2:-}; has_at=1; shift 2 ;;
+      *) die "settle: unknown argument $1" ;;
+    esac
+  done
+  [[ -n $key ]] || die "settle: --answer <key> required"
+  need_entry "$id"
+  load | jq -e --arg id "$id" 'any(.entries[]; .id == $id and .kind == "decision")' >/dev/null \
+    || die "settle: $id is not a decision"
+  load | jq -e --arg id "$id" 'any(.entries[]; .id == $id and .status == "open")' >/dev/null \
+    || die "settle: $id is not open"
+  load | jq -e --arg id "$id" --arg k "$key" 'any(.entries[]; .id == $id and any(.options[]?; .key == $k))' >/dev/null \
+    || die "settle: '$key' is not an option of $id"
+  # Assumes ids are unique (they come from a max+1 counter); first() picks the first match, as viewer.py does.
+  local cur; cur=$(load | jq -c --arg id "$id" --arg k "$key" 'first(.entries[] | select(.id == $id) | .options[] | select(.key == $k)) | .text')
+  [[ -z $has_text ]] || jq -e --argjson c "$cur" --arg t "$text" '$c == $t' <<<null >/dev/null \
+    || die "settle: option $key of $id changed since the answer was recorded"
+  if [[ -n $has_at ]]; then
+    local updated; updated=$(load | jq -r --arg id "$id" 'first(.entries[] | select(.id == $id)) | .updated')
+    jq -e -n --arg u "$updated" --arg a "$at" '($u | fromdateiso8601) <= ($a | fromdateiso8601)' >/dev/null \
+      || die "settle: $id changed after the answer was recorded"
+  fi
+  # UX-only best-effort check, no security value whatsoever (see the block comment near the top of this
+  # file and roles/orchestrator.md): looks for merge/deploy/push (NFKC-normalize is not available in jq, so
+  # this is a coarser pass than the Python/JS check -- same word list, casefold and strip-then-search-
+  # anywhere approach, applied to what jq's regex engine can reach: Cc/Cf/Zs/Zl/Zp/Mn categories plus the
+  # specific filler codepoints U+3164, U+FFA0, U+2800) and, separately and never stripped away first,
+  # bidirectional control characters (U+202A-U+202E, U+2066-U+2069) -- these are rejected outright, not
+  # stripped and allowed through, since they are exactly what would let a look-alike answer render safely
+  # while executing as something else. The same two checks run against the decision's own title and note:
+  # if either is blocked, every option of that decision is refused, not only the option the text check
+  # would otherwise catch. None of this can catch paraphrases or convincing look-alikes, and it never
+  # authorizes a merge, deploy, push or anything irreversible by itself -- only a human, or the
+  # orchestrator's own judgment against context, does that (see roles/orchestrator.md). Keep the word list
+  # and both approaches in sync with the page's JS and its own check here.
+  local etitle enote
+  etitle=$(load | jq -r --arg id "$id" 'first(.entries[] | select(.id == $id)) | .title // ""')
+  enote=$(load | jq -r --arg id "$id" 'first(.entries[] | select(.id == $id)) | .note // ""')
+  check_release_word() {
+    local v=$1 what=$2
+    jq -e -n --arg v "$v" '
+      (($v | test("[\u202A-\u202E\u2066-\u2069]"))
+        or (($v | gsub("[\\s\\p{Cc}\\p{Cf}\\p{Zs}\\p{Zl}\\p{Zp}\\p{Mn}ㅤﾠ⠀]"; "") | ascii_downcase) as $n
+          | ["merge", "deploy", "push"] | any(. as $w | $n | contains($w)))) | not' <<<null >/dev/null \
+      || die "settle: $what"
+  }
+  check_release_word "$etitle" "the decision's title contains merge, deploy, push or a directional control character; answer in chat, not from an option"
+  check_release_word "$enote" "the decision's note contains merge, deploy, push or a directional control character; answer in chat, not from an option"
+  check_release_word "$cur" "merge, deploy, push and directional control characters are answered in chat, not settled from an option"
+  save "$(load | jq --arg id "$id" --argjson a "$cur" --arg ts "$(now)" '
+    .entries |= map(if .id == $id then
+      .status = "settled" | .answer = $a | .updated = $ts
+      | if has("note") then .note += "\nAnswer: " + $a else . end
+      else . end)')"
+}
+
+# Consumes the current answers.jsonl for a project, settling each line via cmd_settle (jq-driven, values
+# always passed through --arg/--argjson, never interpolated into a shell string that gets re-parsed).
+# Renames answers.jsonl to a timestamped .processing file first so a concurrent POST /answer appends to a
+# fresh answers.jsonl instead, and every line -- settled, refused or unparseable -- moves to
+# answers.done.jsonl, so a line skipped because its decision wasn't open is never reconsidered from a live
+# file (see fix 7 above: settle's --answer-at guards against a decision that was reopened and changed after
+# the answer was sent). A line that isn't even a JSON object (a corrupt append, a partial write) is
+# recorded as unparseable and the run continues with the next line, rather than aborting the whole batch.
+cmd_consume_answers() {
+  local project=${1:-}
+  [[ -n $project ]] || die "consume-answers: <project> required"
+  [[ $project == "$HERDMASTER_PROJECT" ]] || die "consume-answers: <project> must match \$HERDMASTER_PROJECT"
+  local live="$DIR/answers.jsonl" done_file="$DIR/answers.done.jsonl"
+  [[ -f $live ]] || { echo "settled 0, refused 0, unparseable 0"; return 0; }
+  local claim="$DIR/answers.$(date -u +%Y%m%dT%H%M%S).$$.$RANDOM.processing"
+  mv "$live" "$claim"
+  local settled=0 refused=0 unparseable=0 reasons=()
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ -n $line ]] || continue
+    if ! jq -e 'type == "object"' <<<"$line" >/dev/null 2>&1; then
+      unparseable=$((unparseable + 1))
+      echo "herdmaster-board: consume-answers: skipping unparseable line: ${line:0:200}" >&2
+      jq -cn --arg raw "${line:0:2000}" --arg ts "$(now)" '{raw: $raw, result: "unparseable", at: $ts}' >> "$done_file"
+      continue
+    fi
+    local lproj lid lkey ltext lat result reason=""
+    lproj=$(jq -r '.project // empty' <<<"$line" 2>/dev/null) || lproj=""
+    lid=$(jq -r '.id // empty' <<<"$line" 2>/dev/null) || lid=""
+    lkey=$(jq -r '.key // empty' <<<"$line" 2>/dev/null) || lkey=""
+    ltext=$(jq -r '.text // empty' <<<"$line" 2>/dev/null) || ltext=""
+    lat=$(jq -r '.at // empty' <<<"$line" 2>/dev/null) || lat=""
+    if [[ -z $lproj || -z $lid || -z $lkey || $lproj != "$project" ]]; then
+      reason="malformed line or wrong project"; result=refused
+    else
+      local args=(settle "$lid" --answer "$lkey")
+      [[ -z $ltext ]] || args+=(--answer-text "$ltext")
+      [[ -z $lat ]] || args+=(--answer-at "$lat")
+      local out
+      if out=$(HERDMASTER_PROJECT="$project" "$0" "${args[@]}" 2>&1); then
+        result=settled
+      else
+        reason=$out; result=refused
+      fi
+    fi
+    if [[ $result == settled ]]; then settled=$((settled + 1)); else refused=$((refused + 1)); reasons+=("$lid: $reason"); fi
+    jq -c --arg r "$result" --arg why "$reason" '. + {result: $r} + (if $why != "" then {reason: $why} else {} end)' <<<"$line" >> "$done_file"
+  done < "$claim"
+  chmod 600 "$done_file" 2>/dev/null || true
+  rm -f "$claim"
+  echo "settled $settled, refused $refused, unparseable $unparseable"
+  ((refused == 0)) || printf 'refused: %s\n' "${reasons[@]}"
 }
 
 cmd_attempt() {
@@ -424,6 +553,8 @@ case $sub in
   set-review) cmd_set_review "$@" ;;
   set-group) cmd_set_group "$@" ;;
   status) cmd_status "$@" ;;
+  settle) cmd_settle "$@" ;;
+  consume-answers) cmd_consume_answers "$@" ;;
   attempt) cmd_attempt "$@" ;;
   supersede) cmd_supersede "$@" ;;
   release-when-done) cmd_release_when_done "$@" ;;
@@ -432,5 +563,5 @@ case $sub in
   archive) cmd_archive ;;
   count) cmd_count ;;
   show) cmd_show ;;
-  *) sed -n '2,17p' "$0"; exit 2 ;;
+  *) sed -n '2,19p' "$0"; exit 2 ;;
 esac

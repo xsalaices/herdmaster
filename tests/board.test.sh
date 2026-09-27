@@ -67,6 +67,64 @@ eq "$(jq -r --arg g "$g1" '.entries[] | select(.id == $g) | .answer' "$f")" "B, 
 "$B" status "$n" superseded "nope" 2>/dev/null && { echo "FAIL: answer on non-settle" >&2; exit 1; }
 eq "$(jq '.entries | length' "$f")" 6
 
+p=$("$B" add decision "Pick font" --note "Body text" --option "A|Serif" --option "B|Sans")
+"$B" settle "$p" --answer C 2>/dev/null && { echo "FAIL: settle with unknown key" >&2; exit 1; }
+"$B" settle "$p" 2>/dev/null && { echo "FAIL: settle without --answer" >&2; exit 1; }
+"$B" settle "$t1" --answer A 2>/dev/null && { echo "FAIL: settle on task" >&2; exit 1; }
+"$B" settle D-999 --answer A 2>/dev/null && { echo "FAIL: settle unknown id" >&2; exit 1; }
+eq "$(jq -r --arg p "$p" '.entries[] | select(.id == $p) | .status' "$f")" open
+"$B" settle "$p" --answer B
+eq "$(jq -c --arg p "$p" '.entries[] | select(.id == $p) | [.status, .answer, .note]' "$f")" '["settled","Sans","Body text\nAnswer: Sans"]'
+"$B" settle "$p" --answer A 2>/dev/null && { echo "FAIL: settle twice" >&2; exit 1; }
+eq "$(jq -r --arg p "$p" '.entries[] | select(.id == $p) | .answer' "$f")" Sans
+q=$("$B" add decision "Pick size" --option "A|Small" --option "B|Large")
+"$B" settle "$q" --answer A
+eq "$(jq -c --arg q "$q" '.entries[] | select(.id == $q) | [.status, .answer, has("note")]' "$f")" '["settled","Small",false]'
+u=$("$B" add decision "Pick tone" --option "A|Formal" --option "B|Casual")
+"$B" set-options "$u" --option "A|Formal" --option "B|Merge to main"
+"$B" settle "$u" --answer B --answer-text "Casual" 2>/dev/null && { echo "FAIL: settle with changed option text" >&2; exit 1; }
+"$B" settle "$u" --answer A --answer-text "Formal " 2>/dev/null && { echo "FAIL: settle with near-miss text" >&2; exit 1; }
+eq "$(jq -r --arg u "$u" '.entries[] | select(.id == $u) | .status' "$f")" open
+"$B" settle "$u" --answer A --answer-text "Formal"
+eq "$(jq -c --arg u "$u" '.entries[] | select(.id == $u) | [.status, .answer]' "$f")" '["settled","Formal"]'
+m=$("$B" add decision "Release" --option "A|Merge to main" --option "B|$(printf '\xef\xbb\xbf')deploy now" --option "C|$(printf '\xe2\x80\x8b')PUSH" --option "D|Wait, then merge" --option "E|All done")
+for k in A B C D; do
+  txt=$(jq -r --arg m "$m" --arg k "$k" '.entries[] | select(.id == $m) | .options[] | select(.key == $k) | .text' "$f")
+  "$B" settle "$m" --answer "$k" --answer-text "$txt" 2>/dev/null && { echo "FAIL: settled release option $k" >&2; exit 1; }
+  "$B" settle "$m" --answer "$k" 2>/dev/null && { echo "FAIL: settled release option $k without text" >&2; exit 1; }
+done
+eq "$(jq -r --arg m "$m" '.entries[] | select(.id == $m) | .status' "$f")" open
+"$B" settle "$m" --answer E --answer-text "All done"
+eq "$(jq -r --arg m "$m" '.entries[] | select(.id == $m) | .answer' "$f")" "All done"
+eq "$(jq '.entries | length' "$f")" 10
+
+# Bidi directional control characters are rejected outright in an option's text, not stripped and allowed.
+bd=$("$B" add decision "Pick a name" --option "A|$(printf '\xe2\x80\xaeevil')" --option "B|Fine")
+"$B" settle "$bd" --answer A 2>/dev/null && { echo "FAIL: settled bidi-control option" >&2; exit 1; }
+eq "$(jq -r --arg b "$bd" '.entries[] | select(.id == $b) | .status' "$f")" open
+"$B" settle "$bd" --answer B
+eq "$(jq -r --arg b "$bd" '.entries[] | select(.id == $b) | .status' "$f")" settled
+
+# A blocked word or bidi control in the decision's own title or note refuses every option of that decision,
+# no matter which option is picked (a decision can never be settled this way, so clean up with supersede).
+bt=$("$B" add decision "Merge strategy" --option "A|Squash" --option "B|Rebase")
+"$B" settle "$bt" --answer A 2>/dev/null && { echo "FAIL: settled decision with blocked title" >&2; exit 1; }
+eq "$(jq -r --arg b "$bt" '.entries[] | select(.id == $b) | .status' "$f")" open
+"$B" supersede "$bt"
+bn=$("$B" add decision "Pick a font weight" --note "$(printf '\xe2\x80\xaeplease deploy')" --option "A|Light" --option "B|Bold")
+"$B" settle "$bn" --answer A 2>/dev/null && { echo "FAIL: settled decision with blocked note" >&2; exit 1; }
+eq "$(jq -r --arg b "$bn" '.entries[] | select(.id == $b) | .status' "$f")" open
+"$B" supersede "$bn"
+
+up=$("$B" add decision "Timing" --option "A|Now" --option "B|Later")
+at_old="2000-01-01T00:00:00Z"
+"$B" settle "$up" --answer A --answer-at "$at_old" 2>/dev/null && { echo "FAIL: settled with a stale --answer-at" >&2; exit 1; }
+eq "$(jq -r --arg u "$up" '.entries[] | select(.id == $u) | .status' "$f")" open
+at_now=$(jq -r --arg u "$up" '.entries[] | select(.id == $u) | .updated' "$f")
+"$B" settle "$up" --answer A --answer-at "$at_now"
+eq "$(jq -r --arg u "$up" '.entries[] | select(.id == $u) | .status' "$f")" settled
+eq "$(jq '.entries | length' "$f")" 14
+
 r=$("$B" add task "Review me")
 "$B" set-review "$r" --summary "Adds a panel" --diff "main..feat" --tests "12 passed" --preview "http://127.0.0.1:5173/" --screenshot /private/tmp/claude-501/a.png --screenshot /private/tmp/claude-501/b.png --link "Docs|https://example.com/d" --link "PR|https://example.com/pr/1"
 rv() { jq -c --arg r "$r" ".entries[] | select(.id == \$r) | .review_pack | $1" "$f"; }
@@ -112,6 +170,82 @@ eq "$(jq -r '.grid_panes | type' "$s")" number
 eq "$("$B" settings get herdr_workspace)" w11
 "$B" settings set herdr_workspace 'a b' 2>/dev/null && { echo "FAIL: bad workspace accepted" >&2; exit 1; }
 "$B" settings set grid_panes 0 2>/dev/null && { echo "FAIL: bad grid accepted" >&2; exit 1; }
+
+adir="$T/.claude/orchestrator/demo"
+eq "$("$B" consume-answers demo)" "settled 0, refused 0, unparseable 0"
+[[ ! -e "$adir/answers.done.jsonl" ]] || { echo "FAIL: nothing to consume should not create answers.done.jsonl" >&2; exit 1; }
+
+ca1=$("$B" add decision "Pick spacing" --option "A|Compact" --option "B|Comfortable")
+ca2=$("$B" add decision "Pick weight" --option "A|Light" --option "B|Bold")
+now_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+{
+  printf '{"project":"demo","id":"%s","key":"B","text":"Comfortable","at":"%s"}\n' "$ca1" "$now_ts"
+  printf '{"project":"other","id":"%s","key":"A","text":"Light","at":"%s"}\n' "$ca2" "$now_ts"
+} > "$adir/answers.jsonl"
+out=$("$B" consume-answers demo)
+eq "$(head -1 <<<"$out")" "settled 1, refused 1, unparseable 0"
+eq "$(jq -r --arg id "$ca1" '.entries[] | select(.id == $id) | .status' "$f")" settled
+eq "$(jq -r --arg id "$ca1" '.entries[] | select(.id == $id) | .answer' "$f")" "Comfortable"
+eq "$(jq -r --arg id "$ca2" '.entries[] | select(.id == $id) | .status' "$f")" open
+[[ ! -e "$adir/answers.jsonl" ]] || { echo "FAIL: no concurrent write, answers.jsonl should be gone" >&2; exit 1; }
+eq "$(wc -l < "$adir/answers.done.jsonl" | tr -d ' ')" 2
+eq "$(jq -r --arg id "$ca1" 'select(.id == $id) | .result' "$adir/answers.done.jsonl")" settled
+eq "$(jq -r --arg id "$ca2" 'select(.id == $id) | .result' "$adir/answers.done.jsonl")" refused
+eq "$(jq -r --arg id "$ca2" 'select(.id == $id) | has("reason")' "$adir/answers.done.jsonl")" true
+
+# A line whose answer predates the decision's last change (e.g. it was reopened) is refused, not reconsidered.
+ca3=$("$B" add decision "Pick tone" --option "A|Warm" --option "B|Cool")
+stale_at=$(jq -r --arg id "$ca3" '.entries[] | select(.id == $id) | .updated' "$f")
+sleep 1.1
+"$B" status "$ca3" open
+printf '{"project":"demo","id":"%s","key":"B","text":"Cool","at":"%s"}\n' "$ca3" "$stale_at" > "$adir/answers.jsonl"
+eq "$("$B" consume-answers demo | head -1)" "settled 0, refused 1, unparseable 0"
+eq "$(jq -r --arg id "$ca3" '.entries[] | select(.id == $id) | .status' "$f")" open
+eq "$(wc -l < "$adir/answers.done.jsonl" | tr -d ' ')" 3
+
+# A malformed line (not even JSON, or not a JSON object) is recorded as unparseable, never aborts the run,
+# and a valid line elsewhere in the same file still settles.
+ca3b=$("$B" add decision "Pick density" --option "A|Loose" --option "B|Snug")
+now_ts2=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+{
+  printf 'not json at all\n'
+  printf '["also","not","an","object"]\n'
+  printf '{"project":"demo","id":"%s","key":"B","text":"Snug","at":"%s"}\n' "$ca3b" "$now_ts2"
+} > "$adir/answers.jsonl"
+before_unp=$(wc -l < "$adir/answers.done.jsonl" | tr -d ' ')
+eq "$("$B" consume-answers demo 2>/dev/null | head -1)" "settled 1, refused 0, unparseable 2"
+eq "$(jq -r --arg id "$ca3b" '.entries[] | select(.id == $id) | .status' "$f")" settled
+eq "$(jq -r --arg id "$ca3b" '.entries[] | select(.id == $id) | .answer' "$f")" "Snug"
+eq "$(wc -l < "$adir/answers.done.jsonl" | tr -d ' ')" "$((before_unp + 3))"
+eq "$(jq -c 'select(.result == "unparseable") | .raw' "$adir/answers.done.jsonl" | sort -u | wc -l | tr -d ' ')" 2
+eq "$(jq -r 'select(.raw == "not json at all") | .result' "$adir/answers.done.jsonl")" unparseable
+
+"$B" consume-answers other 2>/dev/null && { echo "FAIL: consume-answers rejects mismatched project" >&2; exit 1; }
+
+# Atomicity: a line appended to the fresh answers.jsonl left behind by consume-answers's rename is never lost.
+race_ids=()
+for i in $(seq 1 40); do race_ids+=("$("$B" add decision "Race $i" --option "A|Yes $i" --option "B|No $i")"); done
+race_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+: > "$adir/answers.jsonl"
+for id in "${race_ids[@]}"; do
+  txt=$(jq -r --arg id "$id" '.entries[] | select(.id == $id) | .options[0].text' "$f")
+  printf '{"project":"demo","id":"%s","key":"A","text":"%s","at":"%s"}\n' "$id" "$txt" "$race_ts" >> "$adir/answers.jsonl"
+done
+before_done=$(wc -l < "$adir/answers.done.jsonl" | tr -d ' ')
+"$B" consume-answers demo > "$T/race.out" &
+race_pid=$!
+sleep 0.15
+printf '{"project":"demo","id":"bogus","key":"A","text":"x","at":"1970-01-01T00:00:00Z"}\n' > "$adir/answers.jsonl"
+wait "$race_pid"
+eq "$(head -1 "$T/race.out")" "settled 40, refused 0, unparseable 0"
+[[ -f "$adir/answers.jsonl" ]] || { echo "FAIL: concurrently-appended answers.jsonl lost" >&2; exit 1; }
+eq "$(cat "$adir/answers.jsonl")" '{"project":"demo","id":"bogus","key":"A","text":"x","at":"1970-01-01T00:00:00Z"}'
+eq "$(wc -l < "$adir/answers.done.jsonl" | tr -d ' ')" "$((before_done + 40))"
+for id in "${race_ids[@]}"; do
+  eq "$(jq -r --arg id "$id" '.entries[] | select(.id == $id) | .status' "$f")" settled
+done
+eq "$("$B" consume-answers demo | head -1)" "settled 0, refused 1, unparseable 0"
+[[ ! -e "$adir/answers.jsonl" ]] || { echo "FAIL: the concurrent line should now be claimed" >&2; exit 1; }
 
 jq '.entries += [range(205) | {id: "T-\(100 + .)", kind: "task", title: "x", status: "done", review: "auto", depends_on: [], attempts: [], created: "2020-01-01T00:00:00Z", updated: "2021-01-01T00:\(10 + (. / 60 | floor)):\(10 + (. % 60))Z"}]' "$f" > "$T/big.json"
 mv "$T/big.json" "$f"

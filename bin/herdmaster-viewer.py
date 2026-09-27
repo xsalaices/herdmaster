@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Read-only localhost viewer for ~/.claude/orchestrator/<project>/tasks.json (see docs/design/board.md).
+"""Localhost viewer for ~/.claude/orchestrator/<project>/tasks.json (see docs/design/board.md).
+It never writes tasks.json; its one write is POST /answer, which appends a line to <project>/answers.jsonl.
 Usage: herdmaster-viewer.py [--project NAME] [--port N]
 Without a project (--project or $HERDMASTER_PROJECT) it shows a tab per ~/.claude/orchestrator/*/tasks.json.
 Port defaults to $HERDMASTER_VIEWER_PORT or 8765. Binds 127.0.0.1 only.
@@ -8,9 +9,11 @@ Single-threaded stdlib server: fine for one local viewer, swap in ThreadingHTTPS
 import argparse
 import errno
 import fcntl
+import hmac
 import json
 import os
 import re
+import secrets
 import stat
 import subprocess
 import sys
@@ -49,6 +52,8 @@ h2 .n{font-weight:600}
 .opt{display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px}
 .opt .k{flex:none;min-width:1.7em;text-align:center;font:700 13px/1.5 ui-monospace,Menlo,monospace;border-radius:6px;padding:0 6px;color:var(--review);background:color-mix(in srgb,var(--review) 14%,transparent)}
 .opt .x{flex:1;min-width:0;font-size:15px;overflow-wrap:anywhere}
+button.opt{width:100%;text-align:left;font:inherit;color:inherit;background:none;cursor:pointer}
+button.opt:hover{border-color:var(--review)}
 .opt.best{border-color:var(--ask);background:color-mix(in srgb,var(--ask) 9%,transparent)}
 .opt.best .k{color:var(--bg);background:var(--ask)}
 .opt .star{flex:none;align-self:center;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ask);border:1px solid var(--ask);border-radius:999px;padding:1px 8px}
@@ -82,6 +87,10 @@ h2 .n{font-weight:600}
 .q.done .sum{color:var(--ready)}
 .qb{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 12px 14px}
 .qb .opts{margin:2px 0}
+.cf{flex-basis:100%;display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px}
+.cf button{font:inherit;font-size:13px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);padding:3px 12px;cursor:pointer}
+.cf button.yes{border-color:var(--review);color:var(--review);font-weight:600}
+.cf .err{color:var(--fail)}
 .warn{color:var(--fail);font-size:13px;margin-left:8px}
 .ask{--c:var(--ask)}.review{--c:var(--review)}.working{--c:var(--work)}.ready{--c:var(--ready)}.failed{--c:var(--fail)}
 .empty{color:var(--mute);padding:12px 2px}
@@ -140,6 +149,12 @@ h1{font-size:14px;font-weight:600;letter-spacing:.02em;margin:0;color:var(--mute
 <div id="past"></div>
 </main>
 <script>
+(function(){
+  const m=/(?:^|[#&])t=([^&]*)/.exec(location.hash);
+  if(m){try{sessionStorage.setItem("hm-token",decodeURIComponent(m[1]))}catch(_){}
+    history.replaceState(null,"",location.pathname+location.search);}
+})();
+function getToken(){try{return sessionStorage.getItem("hm-token")||""}catch(_){return ""}}
 const $=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
 const STATUS={"in review":["review","In review"],"finished":["review","In review"],"working":["working","Working"],"blocked":["working","Working"],"approved":["working","Working"],"paused":["working","Paused"],"deploy-ready":["ready",null],"failed":["failed","Failed"]};
 const ORDER=["review","failed","working","ready"];
@@ -221,13 +236,53 @@ function addNote(r,e){
   if(!open)clampChecks.push([n,b]);
 }
 function optsOf(e){return Array.isArray(e.options)?e.options.filter(o=>o&&typeof o.key==="string"&&typeof o.text==="string"):[]}
+const NO_ANSWER_WORDS=["merge","deploy","push"];
+const INVISIBLE_RE=/[\s\p{Cc}\p{Cf}\p{Mn}ㅤﾠ⠀]/gu;
+const BIDI_RE=/[\u202A-\u202E\u2066-\u2069]/;
+function uxReleaseWord(text){
+  // Speed bump only, no security value: see roles/orchestrator.md and docs/design/board.md, which say
+  // answers.jsonl never by itself authorizes merge/deploy/push -- this cannot catch paraphrases or
+  // look-alikes. Keep this word list and the NFKC+casefold+strip-then-search-anywhere approach in sync
+  // with herdmaster-board.sh's jq settle check. Bidirectional control characters are checked separately,
+  // on the UNSTRIPPED text, and rejected outright rather than stripped and allowed through (see blocked()).
+  const norm=String(text).normalize("NFKC").replace(INVISIBLE_RE,"").toLowerCase();
+  return NO_ANSWER_WORDS.some(w=>norm.includes(w));
+}
+function blocked(text){return BIDI_RE.test(String(text))||uxReleaseWord(text)}
+const pending=new Map(),sent=new Map(),failedAns=new Map();
+function answerable(e,o){return e.kind==="decision"&&e.status==="open"&&!blocked(o.text)&&!blocked(e.title)&&!blocked(e.note)}
+async function answer(e,p){
+  const qk=cur+"\n"+e.id;
+  let err="Could not send the answer.";
+  try{
+    const r=await fetch("/answer",{method:"POST",cache:"no-store",headers:{"Content-Type":"application/json","X-Herdmaster-Token":getToken()},body:JSON.stringify({project:cur,id:e.id,key:p.key,text:p.text})});
+    if(r.ok){sent.set(qk,p.key);failedAns.delete(qk);err=""}else{try{err=(await r.json()).error||err}catch(_){}}
+  }catch(_){}
+  pending.delete(qk);if(err)failedAns.set(qk,err);last="";paint();
+}
+function confirmRow(e,qk){
+  const c=$("div","cf"),p=pending.get(qk);
+  if(p){
+    const y=$("button","yes","Yes"),n=$("button","","Cancel");y.type=n.type="button";
+    y.onclick=()=>{y.disabled=true;answer(e,p)};n.onclick=()=>{pending.delete(qk);last="";paint()};
+    c.append($("span","",'Confirm: "'+p.text+'"?'),y,n);
+  }else if(sent.has(qk))c.append($("span","","Sent "+sent.get(qk)+". The orchestrator will settle it."));
+  else if(failedAns.has(qk))c.append($("span","err",failedAns.get(qk)));
+  return c.childNodes.length?c:null;
+}
 function addOpts(r,e){
-  const os=optsOf(e);
+  const os=optsOf(e),qk=cur+"\n"+e.id;
   if(os.length){
     const ul=$("ul","opts");
-    os.forEach(o=>{const li=$("li","opt"+(o.recommended===true?" best":""));li.append($("span","k",o.key),$("span","x",o.text));
-      if(o.recommended===true)li.append($("span","star","Recommended"));ul.append(li)});
+    os.forEach(o=>{const cls="opt"+(o.recommended===true?" best":"");
+      let li,box;
+      if(answerable(e,o)&&!sent.has(qk)){li=$("li");box=$("button",cls);box.type="button";box.title="Answer "+o.key;
+        box.onclick=()=>{pending.set(qk,{key:o.key,text:o.text});failedAns.delete(qk);last="";paint()};li.append(box)}
+      else li=box=$("li",cls);
+      box.append($("span","k",o.key),$("span","x",o.text));
+      if(o.recommended===true)box.append($("span","star","Recommended"));ul.append(li)});
     r.append(ul);
+    const c=e.status==="open"&&confirmRow(e,qk);if(c)r.append(c);
   }
   if(e.recommend)r.append($("div","rec",(os.length?"Why: ":"Recommended: ")+e.recommend));
 }
@@ -408,6 +463,11 @@ poll().then(follow);setInterval(poll,3000);setInterval(follow,500);
 PAGE_CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'; "
             "connect-src 'self'; base-uri 'none'; frame-ancestors 'none'")
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+BODY_MAX = 4096
+NO_ANSWER_WORDS = ("merge", "deploy", "push")
+INVISIBLE_CATS = {"Zs", "Zl", "Zp", "Cc", "Cf", "Mn"}
+INVISIBLE_CHARS = {"ㅤ", "ﾠ", "⠀"}
+BIDI_CONTROLS = set("\u202A\u202B\u202C\u202D\u202E\u2066\u2067\u2068\u2069")
 
 
 def read_json(path):
@@ -574,7 +634,98 @@ def host_allowed(handler):
     return handler.headers.get("Host") in ("127.0.0.1:%d" % port, "localhost:%d" % port, "[::1]:%d" % port)
 
 
-def make_handler(fixed, root):
+def origin_allowed(handler):
+    """Defense in depth alongside Host: a present Origin must be this server's own loopback origin."""
+    origin = handler.headers.get("Origin")
+    if origin is None:
+        return True
+    port = handler.server.server_address[1]
+    return origin in ("http://127.0.0.1:%d" % port, "http://localhost:%d" % port)
+
+
+class AnswerError(Exception):
+    def __init__(self, code, msg):
+        self.code, self.msg = code, msg
+
+
+def ux_release_word(text):
+    """Speed bump only, no security value whatsoever: an answers.jsonl line never by itself authorizes
+    merge, deploy or push (see roles/orchestrator.md, docs/design/board.md) -- this cannot catch
+    paraphrases or convincing look-alikes. NFKC-normalizes, casefolds, strips common invisible/filler
+    characters, then looks for the banned words anywhere in what remains. Keep this word list and approach
+    in sync with the page's JS uxReleaseWord and herdmaster-board.sh's jq settle check."""
+    norm = unicodedata.normalize("NFKC", text)
+    stripped = "".join(ch for ch in norm if unicodedata.category(ch) not in INVISIBLE_CATS and ch not in INVISIBLE_CHARS)
+    folded = stripped.casefold()
+    return any(w in folded for w in NO_ANSWER_WORDS)
+
+
+def has_bidi_control(text):
+    """Bidirectional control characters are checked on the text AS GIVEN, never stripped away first --
+    they are rejected outright, not stripped and allowed through, since they are exactly what would let a
+    look-alike answer render safely while meaning something else. Same rationale as ux_release_word: no
+    security value, just a speed bump; see blocked()."""
+    return any(ch in BIDI_CONTROLS for ch in text)
+
+
+def blocked(text):
+    return has_bidi_control(text) or ux_release_word(text)
+
+
+def check_answer(root, fixed, body):
+    """Returns the validated {"project","id","key","text"} or raises AnswerError(400)."""
+    try:
+        doc = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        raise AnswerError(400, "Body is not valid JSON")
+    if not isinstance(doc, dict) or set(doc) != {"project", "id", "key", "text"} or not all(isinstance(v, str) for v in doc.values()):
+        raise AnswerError(400, "Body must be {project, id, key, text} strings")
+    project, did, key, text = doc["project"], doc["id"], doc["key"], doc["text"]
+    if not NAME_RE.fullmatch(project) or ".." in project or (fixed and project != fixed):
+        raise AnswerError(400, "Invalid project name")
+    board = read_board(root, project)
+    if board is None:
+        raise AnswerError(400, "Unknown project")
+    entries = board.get("entries")
+    # Assumes ids are unique (they come from a max+1 counter); the first match wins, as elsewhere in this file.
+    entry = next((e for e in entries if isinstance(e, dict) and e.get("id") == did), None) if isinstance(entries, list) else None
+    if entry is None:
+        raise AnswerError(400, "Unknown decision")
+    if entry.get("kind") != "decision" or entry.get("status") != "open":
+        raise AnswerError(400, "Not an open decision")
+    title = entry.get("title") if isinstance(entry.get("title"), str) else ""
+    note = entry.get("note") if isinstance(entry.get("note"), str) else ""
+    if blocked(title) or blocked(note):
+        raise AnswerError(400, "This decision's title or note contains merge, deploy, push or a directional control character; answer in chat, not from the page")
+    opts = entry.get("options") if isinstance(entry.get("options"), list) else []
+    opt = next((o for o in opts if isinstance(o, dict) and o.get("key") == key and isinstance(o.get("text"), str)), None)
+    if opt is None:
+        raise AnswerError(400, "Unknown option key")
+    if opt["text"] != text:
+        raise AnswerError(400, "Option text has changed since you loaded the page; refresh and try again")
+    if blocked(opt["text"]):
+        raise AnswerError(400, "Merge, deploy, push or a directional control character are answered in chat, not from the page")
+    return {"project": project, "id": did, "key": key, "text": opt["text"]}
+
+
+def append_answer(root, ans):
+    line = json.dumps(dict(ans, at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())), separators=(",", ":")) + "\n"
+    d = os.path.join(root, ans["project"])
+    os.makedirs(d, exist_ok=True)
+    fd = os.open(os.path.join(d, "answers.jsonl"), os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        data = line.encode()
+        written = 0
+        while written < len(data):
+            n = os.write(fd, data[written:])
+            if n <= 0:
+                raise OSError("short write to answers.jsonl")
+            written += n
+    finally:
+        os.close(fd)
+
+
+def make_handler(fixed, root, token):
     class Handler(BaseHTTPRequestHandler):
         timeout = 5
 
@@ -628,10 +779,7 @@ def make_handler(fixed, root):
 
         def do_GET(self):
             if not host_allowed(self):
-                self.send_response(403)
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-                return
+                return self._forbidden()
             u = urlsplit(self.path)
             route = u.path
             if route in ("/", "/index.html"):
@@ -682,7 +830,47 @@ def make_handler(fixed, root):
             self.send_header("Content-Length", "0")
             self.end_headers()
 
-        do_POST = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = _deny
+        do_PUT = do_DELETE = do_PATCH = do_OPTIONS = _deny
+
+        def _forbidden(self):
+            self.send_response(403)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def do_POST(self):
+            if not host_allowed(self):
+                return self._forbidden()
+            if urlsplit(self.path).path != "/answer":
+                return self._deny()
+            if not origin_allowed(self):
+                return self._forbidden()
+            try:
+                lengths = self.headers.get_all("Content-Length") or []
+                length = int(lengths[0]) if len(lengths) == 1 else -1
+            except ValueError:
+                return self._json_error(400, "Content-Length required")
+            if length < 0:
+                return self._json_error(400, "Content-Length required")
+            if length > BODY_MAX:
+                return self._json_error(413, "Body too large")
+            if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
+                return self._json_error(415, "Content-Type must be application/json")
+            given = self.headers.get("X-Herdmaster-Token") or ""
+            if not hmac.compare_digest(given.encode("utf-8", "surrogateescape"), token.encode()):
+                return self._forbidden()
+            body = self.rfile.read(min(length, BODY_MAX + 1))
+            if len(body) > BODY_MAX:
+                return self._json_error(413, "Body too large")
+            if len(body) != length:
+                return self._json_error(400, "Body shorter than Content-Length")
+            try:
+                ans = check_answer(root, fixed, body)
+                append_answer(root, ans)
+            except AnswerError as e:
+                return self._json_error(e.code, e.msg)
+            except OSError as e:
+                return self._json_error(500, "Cannot record answer: %s" % e.strerror)
+            self._send(200, json.dumps({"ok": True}), "application/json")
 
         def do_HEAD(self):
             self._deny()
@@ -694,20 +882,23 @@ def make_handler(fixed, root):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Read-only board viewer on 127.0.0.1")
+    ap = argparse.ArgumentParser(description="Board viewer on 127.0.0.1")
     ap.add_argument("--project", default=os.environ.get("HERDMASTER_PROJECT"))
     ap.add_argument("--port", type=int, default=int(os.environ.get("HERDMASTER_VIEWER_PORT", "8765")))
     a = ap.parse_args()
     if a.project and (not NAME_RE.fullmatch(a.project) or ".." in a.project):
         sys.exit("herdmaster-viewer: invalid project name '%s'" % a.project)
     root = os.path.expanduser("~/.claude/orchestrator")
+    token = secrets.token_urlsafe(32)
     try:
-        srv = HTTPServer(("127.0.0.1", a.port), make_handler(a.project, root))
+        srv = HTTPServer(("127.0.0.1", a.port), make_handler(a.project, root, token))
     except OSError as e:
         if e.errno != errno.EADDRINUSE:
             raise
         sys.exit("herdmaster-viewer: port %d is already in use; pass --port N to pick another" % a.port)
-    print("herdmaster viewer: http://127.0.0.1:%d/ (%s)" % (srv.server_address[1], "project " + a.project if a.project else "all projects"), flush=True)
+    print("herdmaster viewer: http://127.0.0.1:%d/#t=%s (%s, one-time link -- the token moves to this "
+          "browser tab's sessionStorage on load and disappears from the visible URL)" %
+          (srv.server_address[1], token, "project " + a.project if a.project else "all projects"), flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

@@ -47,7 +47,7 @@ Shared state lives in `~/.claude/orchestrator/<project>/` (`master`, `orchestrat
 
 ## Board and layout
 
-- **Board** (`tasks.json`): tasks and decisions with lifecycle, review mode (`review:user` for UI, website design and design decisions; `review:auto` for routine work and architecture), attempts and dependencies. The orchestrator is the only writer, through `bin/herdmaster-board.sh`; viewers are read-only. See [docs/design/board.md](docs/design/board.md). The final step is always manual unless you say `<word> T# when done`.
+- **Board** (`tasks.json`): tasks and decisions with lifecycle, review mode (`review:user` for UI, website design and design decisions; `review:auto` for routine work and architecture), attempts and dependencies. The orchestrator is the only writer, through `bin/herdmaster-board.sh`; viewers never write it. See [docs/design/board.md](docs/design/board.md). The final step is always manual unless you say `<word> T# when done`.
 - **Layout** (`bin/herdmaster-layout.sh new-worker`): planner left and orchestrator right on tab 1, workers as an even grid on a workers tab. Tune with `HERDMASTER_GRID_PANES`, `HERDMASTER_WORKER_LAYOUT` and `HERDMASTER_MAX_PANES`.
 - **Pane identity**: launched panes get `HERDMASTER_ROLE` and `HERDMASTER_MASTER`; `/herdmaster` refuses to run in a fleet pane.
 
@@ -65,7 +65,7 @@ Shared state lives in `~/.claude/orchestrator/<project>/` (`master`, `orchestrat
 | `launchd/blocked-pane-watcher` | EXAMPLE: notifies when a herdr agent is blocked on a prompt |
 | `agents/*.md` | pinned-model subagents: lookup (Haiku), worker (Sonnet), deep (Opus) |
 | `bin/herdmaster-board.sh`, `bin/herdmaster-layout.sh` | board writer and worker-pane layout helpers used by the orchestrator |
-| `bin/herdmaster-viewer.py` | read-only localhost board page (127.0.0.1 only, GET only, stdlib python3); run with `--project <name>` |
+| `bin/herdmaster-viewer.py` | localhost board page (127.0.0.1 only, stdlib python3); its one write is `POST /answer` to `answers.jsonl`; run with `--project <name>` |
 | `examples/worker-brief-template.md` | generic fleet rules for every worker brief |
 
 ## Model routing

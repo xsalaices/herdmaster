@@ -50,7 +50,7 @@ Per-project keys in `~/.claude/orchestrator/<project>/settings.json` (set with `
 
 In your project's repo, run `/herdmaster`. Workers are briefed from `examples/worker-brief-template.md`.
 
-Optional board viewer: `python3 "$HERDMASTER_HOME/bin/herdmaster-viewer.py" --project <name>` serves the board page at `http://127.0.0.1:8765/` (change with `HERDMASTER_VIEWER_PORT`). It binds localhost only, polls `tasks.json` every 3s, and its only write is `POST /answer` (see [board.md](design/board.md)); each start writes a fresh token to `~/.claude/herdmaster/viewer-token`.
+Optional board viewer: `python3 "$HERDMASTER_HOME/bin/herdmaster-viewer.py" --project <name>` serves the board page at `http://127.0.0.1:8765/` (change with `HERDMASTER_VIEWER_PORT`). It binds localhost only, polls `tasks.json` every 3s, and its only write is `POST /answer` (see [board.md](design/board.md)); each start prints a one-time URL with the access token in the URL fragment (`#t=...`) -- open that link, the page moves the token into the browser tab's `sessionStorage` and strips it from the visible URL.
 
 ## Uninstall
 

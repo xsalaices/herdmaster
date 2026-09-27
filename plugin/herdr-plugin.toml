@@ -1,0 +1,24 @@
+id = "herdmaster"
+name = "herdmaster"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Planner, orchestrator and worker-pane helpers for herdmaster: board view and grid rebalance."
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "rebalance"
+title = "Rebalance worker grid"
+contexts = ["workspace"]
+command = ["bin/herdmaster-layout.sh", "rebalance"]
+
+[[actions]]
+id = "board"
+title = "Print the project board"
+contexts = ["workspace"]
+command = ["bin/herdmaster-board.sh", "show"]
+
+[[panes]]
+id = "board"
+title = "herdmaster board"
+placement = "split"
+command = ["sh", "-c", "bin/herdmaster-board.sh show; exec \"${SHELL:-sh}\""]

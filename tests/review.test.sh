@@ -118,11 +118,11 @@ sec() { curl -s -o /dev/null -w '%{http_code}' -H "Sec-Fetch-Site: $1" "$B/file?
 [[ $(sec none) == 200 ]] || fail "none"
 
 for r in "/" "/all.json" "/tasks.json" "/settings.json" "/projects.json" "/focus.json" "/project" "/file?path=$(enc "$D/shot.png")"; do
-  [[ $(curl -s -o /dev/null -w '%{http_code}' -H "Host: evil.example" "$B$r") == 421 ]] || fail "evil host $r"
-  [[ $(curl -s -o /dev/null -w '%{http_code}' -H "Host: evil.example:$PORT" "$B$r") == 421 ]] || fail "evil host with port $r"
-  [[ $(curl -s -o /dev/null -w '%{http_code}' -H "Host: 127.0.0.1" "$B$r") == 421 ]] || fail "portless host $r"
-  [[ $(curl -s -o /dev/null -w '%{http_code}' -H "Host: localhost:$PORT" "$B$r") != 421 ]] || fail "localhost host $r"
-  [[ $(curl -s -o /dev/null -w '%{http_code}' -H "Host: 127.0.0.1:$PORT" "$B$r") != 421 ]] || fail "good host $r"
+  [[ $(curl -s -o /dev/null -w '%{http_code}' -H "Host: evil.example" "$B$r") == 403 ]] || fail "evil host $r"
+  [[ $(curl -s -o /dev/null -w '%{http_code}' -H "Host: evil.example:$PORT" "$B$r") == 403 ]] || fail "evil host with port $r"
+  [[ $(curl -s -o /dev/null -w '%{http_code}' -H "Host: 127.0.0.1" "$B$r") == 403 ]] || fail "portless host $r"
+  [[ $(curl -s -o /dev/null -w '%{http_code}' -H "Host: localhost:$PORT" "$B$r") != 403 ]] || fail "localhost host $r"
+  [[ $(curl -s -o /dev/null -w '%{http_code}' -H "Host: 127.0.0.1:$PORT" "$B$r") != 403 ]] || fail "good host $r"
 done
 [[ $(curl -s -H "Host: evil.example" "$B/all.json") != *demo* ]] || fail "board leaked to evil host"
 

@@ -568,9 +568,13 @@ def focused_project(root, workspace):
     return None
 
 
-def make_handler(fixed, root, port):
-    hosts = ("127.0.0.1:%d" % port, "localhost:%d" % port)
+def host_allowed(handler):
+    """DNS-rebinding guard: accept only the loopback names on the port this server is bound to."""
+    port = handler.server.server_address[1]
+    return handler.headers.get("Host") in ("127.0.0.1:%d" % port, "localhost:%d" % port, "[::1]:%d" % port)
 
+
+def make_handler(fixed, root):
     class Handler(BaseHTTPRequestHandler):
         timeout = 5
 
@@ -623,8 +627,11 @@ def make_handler(fixed, root, port):
             return name
 
         def do_GET(self):
-            if self.headers.get("Host") not in hosts:
-                return self._json_error(421, "Unexpected Host")
+            if not host_allowed(self):
+                self.send_response(403)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             u = urlsplit(self.path)
             route = u.path
             if route in ("/", "/index.html"):
@@ -695,7 +702,7 @@ def main():
         sys.exit("herdmaster-viewer: invalid project name '%s'" % a.project)
     root = os.path.expanduser("~/.claude/orchestrator")
     try:
-        srv = HTTPServer(("127.0.0.1", a.port), make_handler(a.project, root, a.port))
+        srv = HTTPServer(("127.0.0.1", a.port), make_handler(a.project, root))
     except OSError as e:
         if e.errno != errno.EADDRINUSE:
             raise

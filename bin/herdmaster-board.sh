@@ -5,7 +5,8 @@
 #        herdmaster-board.sh attempt <id> <status> [feedback] [link]
 #        herdmaster-board.sh supersede <id>
 #        herdmaster-board.sh release-when-done <id> [true|false]
-#        herdmaster-board.sh settings get [key] | settings set <key> <value>   keys: release, grid_panes, worker_layout, max_panes, herdr_workspace
+#        herdmaster-board.sh settings get [key] | settings set <key> <value>
+#          keys: release, grid_panes, worker_layout, max_panes, herdr_workspace, agent, agent_planner, agent_orchestrator, agent_worker
 #        herdmaster-board.sh import-legacy
 #        herdmaster-board.sh archive
 #        herdmaster-board.sh count | show
@@ -138,8 +139,9 @@ cmd_settings() {
   case $op in
     get)
       if [[ -z $key ]]; then settings_json | jq -S .; return; fi
-      [[ $key =~ ^(release|grid_panes|worker_layout|max_panes|herdr_workspace)$ ]] || die "settings: unknown key '$key'"
-      settings_json | jq -r --arg k "$key" '(.[$k] // (if $k == "release" then "deploy" else empty end)) | tostring' ;;
+      [[ $key =~ ^(release|grid_panes|worker_layout|max_panes|herdr_workspace|agent|agent_planner|agent_orchestrator|agent_worker)$ ]] || die "settings: unknown key '$key'"
+      settings_json | jq -r --arg k "$key" '(.[$k] // if $k == "release" then "deploy"
+        elif $k | startswith("agent") then .agent // "claude" else empty end) | tostring' ;;
     set)
       [[ -n $key && -n $val ]] || die "settings set: <key> <value> required"
       local json
@@ -151,6 +153,9 @@ cmd_settings() {
         grid_panes|max_panes) [[ $val =~ ^[1-9][0-9]*$ ]] || die "settings: $key must be a positive integer"
           json=$val ;;
         herdr_workspace) [[ $val =~ ^[A-Za-z0-9._:-]+$ ]] || die "settings: herdr_workspace must be a herdr workspace id"
+          json=$(jq -cn --arg v "$val" '$v') ;;
+        agent|agent_planner|agent_orchestrator|agent_worker)
+          [[ $val =~ ^[a-z0-9-]+$ && -f $(dirname "$0")/../adapters/$val.sh ]] || die "settings: $key must name an adapter in adapters/"
           json=$(jq -cn --arg v "$val" '$v') ;;
         *) die "settings: unknown key '$key'" ;;
       esac
@@ -293,5 +298,5 @@ case $sub in
   archive) cmd_archive ;;
   count) cmd_count ;;
   show) cmd_show ;;
-  *) sed -n '2,11p' "$0"; exit 2 ;;
+  *) sed -n '2,12p' "$0"; exit 2 ;;
 esac

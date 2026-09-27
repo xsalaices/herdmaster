@@ -85,8 +85,12 @@ Per project: `~/.claude/orchestrator/<project>/settings.json`, edited with `herd
 | `worker_layout` | `tab` or `main` | env, then `tab` |
 | `max_panes` | positive integer | env, then 4 |
 | `herdr_workspace` | herdr workspace id, e.g. `w11` | unset |
+| `agent` | an adapter name from `adapters/`, e.g. `claude` | `claude` |
+| `agent_planner`, `agent_orchestrator`, `agent_worker` | an adapter name, for that role only | `agent` |
 
 Precedence for the layout keys: settings file, then the `HERDMASTER_*` environment variable, then the built-in default. `herdmaster-layout.sh` reads the file.
+
+`agent` and `agent_<role>` pick the terminal agent for fleet panes. `herdmaster-layout.sh new-worker|new-orchestrator ... --tier <tier> [--resume <id>] [prompt]` asks `herdmaster-agent.sh` to build the launch command from `adapters/<agent>.sh`; a launch given as an explicit command is run as before. Only the `claude` adapter exists so far (see docs/design/providers.md).
 
 `herdr_workspace` maps a herdr workspace to the project. `herdmaster-layout.sh new-orchestrator` records it from `herdr pane current`, and the viewer's `GET /focus.json` uses it to report which project owns the focused workspace, so the page can follow herdr. Unmapped or unreachable herdr gives `null`.
 

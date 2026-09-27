@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Places worker panes and keeps the grid even.
-# Usage: herdmaster-layout.sh [--dry-run] new-worker <label> <command...>   prints the new pane id
-#        herdmaster-layout.sh [--dry-run] new-orchestrator <command...>    splits the current pane right, labels it orchestrator, records the herdr workspace in settings, prints the new pane id
-#        herdmaster-layout.sh [--dry-run] rebalance [pane]                 equal widths for the tab of pane (default: current)
+# Usage: herdmaster-layout.sh [--dry-run] new-worker <label> <launch>   prints the new pane id
+#        herdmaster-layout.sh [--dry-run] new-orchestrator <launch>    splits the current pane right, labels it orchestrator, records the herdr workspace in settings, prints the new pane id
+#        herdmaster-layout.sh [--dry-run] rebalance [pane]             equal widths for the tab of pane (default: current)
+# <launch> is either <command...>, or --tier <light|default|deep> [--resume <id>] [prompt] to build it with herdmaster-agent.sh.
 # Per-project settings.json (worker_layout, grid_panes, max_panes) overrides the env vars below.
 # Env: HERDMASTER_WORKER_LAYOUT (tab|main, default tab), HERDMASTER_GRID_PANES (default 6),
 #      HERDMASTER_MAX_PANES (default 4, workers on the main tab when layout is main), HERDMASTER_PROJECT.
@@ -57,10 +58,17 @@ split_target() {
     | "\(.pane_id) \(if .rect.width >= 2 * .rect.height then "right" else "down" end)"'
 }
 
+# The pane's command, one printf '%q' word per argument so briefs with spaces or quotes survive the pane shell.
+launch_cmd() {
+  local role=$1; shift
+  if [[ $1 == --tier ]]; then "$(dirname "$0")/herdmaster-agent.sh" command "$role" "${@:2}"; else printf '%q ' "$@"; fi
+}
+
 cmd_new_worker() {
   local label=${1:-}; shift || true
-  [[ -n $label && $# -gt 0 ]] || die "new-worker: <label> <command...> required"
-  local cur ws tab pane="" dir
+  [[ -n $label && $# -gt 0 ]] || die "new-worker: <label> <launch> required"
+  local cur ws tab pane="" dir cmd
+  cmd=$(launch_cmd worker "$@")
   cur=$(current_pane_json); ws=$(jq -r .workspace_id <<<"$cur"); tab=$(jq -r .tab_id <<<"$cur")
 
   if [[ $LAYOUT == main ]] && (( $(tab_panes "$tab" "$ws" | wc -l) - FIXED_PANES < MAXP )); then
@@ -84,17 +92,18 @@ cmd_new_worker() {
 
   local master; master=$(master_name)
   mut pane rename "$pane" "$label" >&2
-  mut pane run "$pane" "HERDMASTER_ROLE=worker HERDMASTER_MASTER=$(printf '%q' "$master") $(printf '%q ' "$@")" >&2
+  mut pane run "$pane" "HERDMASTER_ROLE=worker HERDMASTER_MASTER=$(printf '%q' "$master") $cmd" >&2
   if (( DRY )); then cmd_rebalance >&2; else cmd_rebalance "$pane" >&2; fi
   echo "$pane"
 }
 
 cmd_new_orchestrator() {
-  [[ $# -gt 0 ]] || die "new-orchestrator: <command...> required"
-  local pane master; master=$(master_name)
+  [[ $# -gt 0 ]] || die "new-orchestrator: <launch> required"
+  local pane master cmd; master=$(master_name)
+  cmd=$(launch_cmd orchestrator "$@")
   pane=$(mut_json .result.pane.pane_id "<new-pane>" pane split --current --direction right --no-focus)
   mut pane rename "$pane" orchestrator >&2
-  mut pane run "$pane" "HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=$(printf '%q' "$master") $(printf '%q ' "$@")" >&2
+  mut pane run "$pane" "HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=$(printf '%q' "$master") $cmd" >&2
   record_workspace >&2
   echo "$pane"
 }
@@ -152,5 +161,5 @@ case $sub in
   new-worker) cmd_new_worker "$@" ;;
   new-orchestrator) cmd_new_orchestrator "$@" ;;
   rebalance) cmd_rebalance "$@" ;;
-  *) sed -n '2,9p' "$0"; exit 2 ;;
+  *) sed -n '2,10p' "$0"; exit 2 ;;
 esac

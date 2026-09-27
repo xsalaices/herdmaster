@@ -39,12 +39,14 @@ say() { echo "$*"; }
 say "herdmaster install (dry-run=$DRY) HOME=$HOME"
 
 # 1. helper scripts
-run mkdir -p "$HERDMASTER_HOME/bin" "$HERDMASTER_HOME/state" "$HERDMASTER_HOME/logs"
+run mkdir -p "$HERDMASTER_HOME/bin" "$HERDMASTER_HOME/adapters" "$HERDMASTER_HOME/state" "$HERDMASTER_HOME/logs"
 for f in "$REPO/hooks/pressure-check.sh" "$REPO/hooks/pressure-guard.sh" \
          "$REPO/launchd/cpu-reaper/cpu-reaper.sh" "$REPO/launchd/blocked-pane-watcher/blocked-pane-watcher.sh" \
-         "$REPO/bin/herdmaster-board.sh" "$REPO/bin/herdmaster-layout.sh" "$REPO/bin/herdmaster-viewer.py" "$REPO/bin/herdmaster-labels.sh"; do
+         "$REPO/bin/herdmaster-board.sh" "$REPO/bin/herdmaster-layout.sh" "$REPO/bin/herdmaster-viewer.py" "$REPO/bin/herdmaster-labels.sh" \
+         "$REPO/bin/herdmaster-agent.sh"; do
   run install -m 755 "$f" "$HERDMASTER_HOME/bin/$(basename "$f")"
 done
+run install -m 644 "$REPO/adapters/claude.sh" "$HERDMASTER_HOME/adapters/claude.sh"
 
 # 2. skills (never overwrite an existing skill unless --force)
 for s in herdmaster orchestrator; do

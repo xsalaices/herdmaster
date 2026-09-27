@@ -14,7 +14,7 @@ scripts/install.sh [--with-watcher] [--force]
 
 What it does, and only this:
 
-1. Copies helper scripts to `$HERDMASTER_HOME/bin` (default `~/.claude/herdmaster`; must live inside `~/.claude`).
+1. Copies helper scripts to `$HERDMASTER_HOME/bin` (default `~/.claude/herdmaster`; must live inside `~/.claude`) and the agent adapters to `$HERDMASTER_HOME/adapters`.
 2. Copies the `herdmaster` (master window) and `orchestrator` skills to `~/.claude/skills/`. Existing skills are skipped unless `--force`.
 3. Copies the `lookup`, `worker` and `deep` subagents to `~/.claude/agents/`. Existing agents are skipped unless `--force`.
 4. Renders `com.herdmaster.*` LaunchAgent plists from `launchd/*/*.plist.tmpl` (placeholders `__HOME__` and `__HERDMASTER_HOME__` are substituted) into `~/Library/LaunchAgents` and loads them. `pressure-check`, `cpu-reaper` and the board `viewer` (a small local web server on 127.0.0.1, port 8766 unless `HERDMASTER_VIEWER_PORT` is set at install time, restarted automatically if it stops) by default; the example blocked-pane watcher only with `--with-watcher`.
@@ -43,6 +43,8 @@ Per-project keys in `~/.claude/orchestrator/<project>/settings.json` (set with `
 | `grid_panes`, `max_panes` | positive integer | override the env vars above |
 | `worker_layout` | `tab`, `main` | overrides `HERDMASTER_WORKER_LAYOUT` |
 | `herdr_workspace` | herdr workspace id | recorded by `new-orchestrator`; lets the viewer follow the focused workspace (toggle "Follow herdr" in its settings cog) |
+| `agent` | adapter name (`claude`) | terminal agent for fleet panes launched with `herdmaster-layout.sh ... --tier`; default `claude` |
+| `agent_planner`, `agent_orchestrator`, `agent_worker` | adapter name | per-role override of `agent` |
 
 ## 4. Use
 

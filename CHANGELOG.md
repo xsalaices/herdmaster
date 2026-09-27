@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Providers, phase 1: launch commands come from an agent adapter (`adapters/claude.sh`, `bin/herdmaster-agent.sh`, `herdmaster-layout.sh ... --tier`), picked by the new `agent` and `agent_<role>` settings. The skills and worker brief template are generated from `roles/` by `scripts/build-skills.sh`. No change for Claude.
 - Skills: the final step (merge or deploy) is always manual; `<word> T# when done` releases one task, and the planner forwards approve, reject, pause, stop and done early commands.
 - Skills: the orchestrator keeps a `tasks.json` board (replacing `design-queue.md` and `decisions.md`) with review modes, a rejection flow and deploy-ready rules; the planner shows a board count line and refuses to run in a fleet pane.
 - README: documents the board, the pane layout and pane identity.

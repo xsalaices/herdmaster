@@ -3,6 +3,7 @@
 # Usage: herdmaster-board.sh add <task|decision> <title> [--review auto|user] [--depends ID,ID] [--note TEXT] [--recommend TEXT]
 #          decisions also take --option "A|text" (repeatable, keys A..Z), --recommend-key K and --group "<ticket name>"
 #        herdmaster-board.sh set-group <id> <ticket name>
+#        herdmaster-board.sh set-review <task id> [--summary S] [--diff D] [--tests T] [--preview URL] [--screenshot PATH]... [--link "label|url"]...
 #        herdmaster-board.sh set-options <id> --option "A|text" [--option "B|text"] [--recommend-key K]
 #        herdmaster-board.sh status <id> <state> [answer]     (answer only when settling a decision)
 #        herdmaster-board.sh attempt <id> <status> [feedback] [link]
@@ -160,6 +161,51 @@ cmd_set_group() {
     '.entries |= map(if .id == $id then .group = $g | .updated = $ts else . end)')"
 }
 
+flag() { if [[ -n $1 ]]; then echo true; else echo false; fi; }
+
+cmd_set_review() {
+  local id=${1:-} summary="" diff="" tests="" preview="" shots="" links="" has_s="" has_d="" has_t="" has_p=""
+  [[ -n $id ]] || die "set-review: <id> required"
+  shift
+  while (($#)); do
+    case $1 in
+      --summary) summary=${2:-}; has_s=1; shift 2 ;;
+      --diff) diff=${2:-}; has_d=1; shift 2 ;;
+      --tests) tests=${2:-}; has_t=1; shift 2 ;;
+      --preview) preview=${2:-}; has_p=1; shift 2 ;;
+      --screenshot) shots+=${2:-}$'\n'; shift 2 ;;
+      --link) links+=${2:-}$'\n'; shift 2 ;;
+      *) die "set-review: unknown argument $1" ;;
+    esac
+  done
+  need_entry "$id"
+  load | jq -e --arg id "$id" 'any(.entries[]; .id == $id and .kind == "task")' >/dev/null \
+    || die "set-review: $id is not a task"
+  local url_re='^https?://[^[:space:]]+$'
+  [[ -z $has_p || -z $preview || $preview =~ $url_re ]] || die "set-review: --preview must be an http(s) URL"
+  local link_json shot_json
+  link_json=$(jq -cn --arg raw "$links" '$raw | split("\n") | map(select(length > 0))
+    | map(index("|") as $i | if $i == null then {label: "", url: .} else {label: .[:$i], url: .[$i + 1:]} end
+      | .label |= sub("^ +| +$"; ""; "g") | .url |= sub("^ +| +$"; ""; "g"))')
+  jq -e 'all(.[]; .label != "" and (.url | test("^https?://[^\\s]+$")))' <<<"$link_json" >/dev/null \
+    || die "set-review: --link must look like \"label|http(s) url\""
+  shot_json=$(jq -cn --arg raw "$shots" '$raw | split("\n") | map(select(length > 0))')
+  jq -e 'all(.[]; startswith("/") and (contains("\u0000") | not))' <<<"$shot_json" >/dev/null \
+    || die "set-review: --screenshot must be an absolute path"
+  save "$(load | jq --arg id "$id" --arg ts "$(now)" \
+    --arg s "$summary" --arg d "$diff" --arg t "$tests" --arg p "$preview" \
+    --argjson hs "$(flag "$has_s")" --argjson hd "$(flag "$has_d")" \
+    --argjson ht "$(flag "$has_t")" --argjson hp "$(flag "$has_p")" \
+    --argjson shots "$shot_json" --argjson links "$link_json" '
+    def put($k; $v; $has): if $has then (if $v == "" then del(.[$k]) else .[$k] = $v end) else . end;
+    .entries |= map(if .id == $id then
+      .review_pack = ((.review_pack // {})
+        | put("summary"; $s; $hs) | put("diff"; $d; $hd) | put("tests"; $t; $ht) | put("preview_url"; $p; $hp)
+        | if ($shots | length) > 0 then .screenshots = $shots else . end
+        | if ($links | length) > 0 then .links = $links else . end)
+      | .updated = $ts else . end)')"
+}
+
 cmd_status() {
   local id=${1:-} state=${2:-} answer=${3:-}
   [[ -n $id && -n $state ]] || die "status: <id> <state> required"
@@ -290,6 +336,12 @@ cmd_show() {
     + (if (.depends_on | length) > 0 then "\t<- " + (.depends_on | join(",")) else "" end)
     + (if (.flags // []) | length > 0 then "\t[" + (.flags | join(",")) + "]" else "" end)
     + (if (.group // "") != "" then "\tticket: " + .group else "" end)
+    + (if (.review_pack // {}) | length > 0 then "\n    review: " + ([
+        (.review_pack.summary // empty),
+        ((.review_pack.screenshots // []) | length | if . > 0 then "\(.) shot" + (if . > 1 then "s" else "" end) else empty end),
+        (if .review_pack.preview_url then "preview" else empty end),
+        ((.review_pack.links // []) | length | if . > 0 then "\(.) link" + (if . > 1 then "s" else "" end) else empty end),
+        (if .review_pack.tests then "tests: " + .review_pack.tests else empty end)] | join(" | ")) else "" end)
     + ((.options // []) | map("\n    \(.key)) \(.text)" + (if .recommended then "  (recommended)" else "" end)) | join(""))'
 }
 
@@ -367,6 +419,7 @@ sub=${1:-}; shift || true
 case $sub in
   add) cmd_add "$@" ;;
   set-options) cmd_set_options "$@" ;;
+  set-review) cmd_set_review "$@" ;;
   set-group) cmd_set_group "$@" ;;
   status) cmd_status "$@" ;;
   attempt) cmd_attempt "$@" ;;
@@ -377,5 +430,5 @@ case $sub in
   archive) cmd_archive ;;
   count) cmd_count ;;
   show) cmd_show ;;
-  *) sed -n '2,16p' "$0"; exit 2 ;;
+  *) sed -n '2,17p' "$0"; exit 2 ;;
 esac

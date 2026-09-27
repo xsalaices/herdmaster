@@ -67,6 +67,25 @@ eq "$(jq -r --arg g "$g1" '.entries[] | select(.id == $g) | .answer' "$f")" "B, 
 "$B" status "$n" superseded "nope" 2>/dev/null && { echo "FAIL: answer on non-settle" >&2; exit 1; }
 eq "$(jq '.entries | length' "$f")" 6
 
+r=$("$B" add task "Review me")
+"$B" set-review "$r" --summary "Adds a panel" --diff "main..feat" --tests "12 passed" --preview "http://127.0.0.1:5173/" --screenshot /private/tmp/claude-501/a.png --screenshot /private/tmp/claude-501/b.png --link "Docs|https://example.com/d" --link "PR|https://example.com/pr/1"
+rv() { jq -c --arg r "$r" ".entries[] | select(.id == \$r) | .review_pack | $1" "$f"; }
+eq "$(rv '[.summary, .diff, .tests, .preview_url, (.screenshots | length), (.links | map(.label))]')" '["Adds a panel","main..feat","12 passed","http://127.0.0.1:5173/",2,["Docs","PR"]]'
+eq "$(jq -r --arg r "$r" '.entries[] | select(.id == $r) | .review' "$f")" auto
+"$B" set-review "$r" --tests "13 passed" --screenshot /private/tmp/claude-501/c.png
+eq "$(rv '[.summary, .tests, .screenshots, (.links | length)]')" '["Adds a panel","13 passed",["/private/tmp/claude-501/c.png"],2]'
+"$B" set-review "$r" --preview ""
+eq "$(rv 'has("preview_url")')" false
+eq "$("$B" show | grep -c '^    review: ')" 1
+eq "$("$B" show | grep '^    review: ')" "    review: Adds a panel | 1 shot | 2 links | tests: 13 passed"
+for bad in "--preview javascript:alert(1)" "--preview ftp://h/x" "--preview 'http://a b'" "--link 'x|javascript:1'" "--link 'noseparator'" "--link '|http://a.b'" "--link 'x|file:///etc/passwd'" "--screenshot relative.png" "--nope 1"; do
+  eval "\"\$B\" set-review \"\$r\" $bad" 2>/dev/null && { echo "FAIL: set-review accepted '$bad'" >&2; exit 1; }
+done
+"$B" set-review "$d" --summary x 2>/dev/null && { echo "FAIL: set-review on decision" >&2; exit 1; }
+"$B" set-review T-999 --summary x 2>/dev/null && { echo "FAIL: set-review unknown id" >&2; exit 1; }
+eq "$(rv '.tests')" '"13 passed"'
+"$B" status "$r" cancelled
+
 first=$("$B" count)
 [[ $first == "Board: 1 in review (oldest 0m), 1 flagged" ]] || { echo "FAIL: count '$first'" >&2; exit 1; }
 eq "$("$B" count)" ""
@@ -96,8 +115,8 @@ eq "$("$B" settings get herdr_workspace)" w11
 
 jq '.entries += [range(205) | {id: "T-\(100 + .)", kind: "task", title: "x", status: "done", review: "auto", depends_on: [], attempts: [], created: "2020-01-01T00:00:00Z", updated: "2021-01-01T00:\(10 + (. / 60 | floor)):\(10 + (. % 60))Z"}]' "$f" > "$T/big.json"
 mv "$T/big.json" "$f"
-eq "$("$B" archive)" "archived 6"
+eq "$("$B" archive)" "archived 7"
 eq "$(jq '[.entries[] | select(.status == "done" or .status == "cancelled")] | length' "$f")" 200
-eq "$(jq '.entries | length' "$T/.claude/orchestrator/demo/tasks-archive.json")" 6
+eq "$(jq '.entries | length' "$T/.claude/orchestrator/demo/tasks-archive.json")" 7
 eq "$("$B" archive)" ""
 echo "ok"

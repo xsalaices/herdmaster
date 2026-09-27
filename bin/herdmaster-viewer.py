@@ -50,6 +50,26 @@ h2 .n{font-weight:600}
 .opt.best .k{color:var(--bg);background:var(--ask)}
 .opt .star{flex:none;align-self:center;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ask);border:1px solid var(--ask);border-radius:999px;padding:1px 8px}
 @media (max-width:560px){.opt{flex-wrap:wrap}.opt .star{order:3;margin-left:calc(1.7em + 22px)}}
+.wait{flex-basis:100%;font-size:13px;color:var(--ask)}
+.wait b{font:600 12.5px ui-monospace,Menlo,monospace}
+.tk{background:var(--card);border:1px solid var(--line);border-radius:8px;margin-bottom:8px;overflow:hidden}
+.tk>button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:0;padding:11px 14px;font:inherit;color:var(--ink);cursor:pointer}
+.tk>button:hover{background:color-mix(in srgb,var(--line) 45%,transparent)}
+.chev{flex:none;width:7px;height:7px;margin:0 6px 0 3px;border:solid var(--mute);border-width:0 1.6px 1.6px 0;transform:rotate(-45deg);transition:transform .15s}
+[aria-expanded=true]>.chev{transform:rotate(45deg)}
+.tk .nm{flex:1;min-width:0;font-weight:600;overflow-wrap:anywhere}
+.tk .cnt{flex:none;font-size:12.5px;font-weight:600;color:var(--ready)}
+.tk.open .cnt{color:var(--ask)}
+.q{border-top:1px solid var(--line)}
+.q>button{display:flex;align-items:flex-start;gap:10px;width:100%;text-align:left;background:none;border:0;padding:9px 14px;font:inherit;color:var(--ink);cursor:pointer}
+.q>button:hover{background:color-mix(in srgb,var(--line) 45%,transparent)}
+.q .chev{margin-top:.45em}
+.q .qt{flex:1;min-width:0}
+.q .qt>span{display:block;overflow-wrap:anywhere}
+.q .sum{font-size:14px;color:var(--ask);margin-top:2px}
+.q.done .sum{color:var(--ready)}
+.qb{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 12px 14px}
+.qb .opts{margin:2px 0}
 .warn{color:var(--fail);font-size:13px;margin-left:8px}
 .ask{--c:var(--ask)}.review{--c:var(--review)}.working{--c:var(--work)}.ready{--c:var(--ready)}.failed{--c:var(--fail)}
 .empty{color:var(--mute);padding:12px 2px}
@@ -133,18 +153,17 @@ try{const s=JSON.parse(localStorage.getItem("hm-prefs")||"{}");
 function setPref(k,v){prefs[k]=v;try{localStorage.setItem("hm-prefs",JSON.stringify(prefs))}catch(_){}applyTheme()}
 function applyTheme(){const r=document.documentElement;if(prefs.theme==="auto")r.removeAttribute("data-theme");else r.dataset.theme=prefs.theme}
 applyTheme();
-function row(e,cls,label,past){
-  const r=$("div","row "+cls+(past?" past":""));r.append($("span","tag",short(e.id)),$("span","t",e.title||"(untitled)"));
-  if((e.flags||[]).length)r.append($("span","warn","a decision changed"));
-  if(label)r.append($("span","pill",label));
-  const os=Array.isArray(e.options)?e.options.filter(o=>o&&typeof o.key==="string"&&typeof o.text==="string"):[];
-  if(e.note){
-    const n=$("div","note",e.note);r.append(n);
-    const open=openNotes.has(e.id);if(!open)n.classList.add("clamp");
-    const b=$("button","exp",open?"Show less":"Show more");b.type="button";b.setAttribute("aria-expanded",open);b.hidden=!open;
-    b.onclick=()=>{if(openNotes.has(e.id))openNotes.delete(e.id);else openNotes.add(e.id);last="";paint()};r.append(b);
-    if(!open)clampChecks.push([n,b]);
-  }
+let waiting=new Map();
+function addNote(r,e){
+  const n=$("div","note",e.note);r.append(n);
+  const open=openNotes.has(e.id);if(!open)n.classList.add("clamp");
+  const b=$("button","exp",open?"Show less":"Show more");b.type="button";b.setAttribute("aria-expanded",open);b.hidden=!open;
+  b.onclick=()=>{if(openNotes.has(e.id))openNotes.delete(e.id);else openNotes.add(e.id);last="";paint()};r.append(b);
+  if(!open)clampChecks.push([n,b]);
+}
+function optsOf(e){return Array.isArray(e.options)?e.options.filter(o=>o&&typeof o.key==="string"&&typeof o.text==="string"):[]}
+function addOpts(r,e){
+  const os=optsOf(e);
   if(os.length){
     const ul=$("ul","opts");
     os.forEach(o=>{const li=$("li","opt"+(o.recommended===true?" best":""));li.append($("span","k",o.key),$("span","x",o.text));
@@ -152,7 +171,50 @@ function row(e,cls,label,past){
     r.append(ul);
   }
   if(e.recommend)r.append($("div","rec",(os.length?"Why: ":"Recommended: ")+e.recommend));
+}
+function row(e,cls,label,past){
+  const r=$("div","row "+cls+(past?" past":""));r.append($("span","tag",short(e.id)),$("span","t",e.title||"(untitled)"));
+  if((e.flags||[]).length)r.append($("span","warn","a question changed"));
+  if(label)r.append($("span","pill",label));
+  const w=waiting.get(e.id);
+  if(w){const x=$("div","wait","waiting on ");w.forEach((id,i)=>{if(i)x.append(", ");x.append($("b","",short(id)))});r.append(x)}
+  if(e.note)addNote(r,e);
+  addOpts(r,e);
   return r;
+}
+const openTk=new Map(),openQ=new Set();
+const OTHER="Other";
+function ticketOf(e){return typeof e.group==="string"&&e.group.trim()?e.group.trim():OTHER}
+function summary(e){
+  if(e.status==="settled")return[typeof e.answer==="string"&&e.answer?"Answer: "+e.answer:"Settled",true];
+  const r=optsOf(e).find(o=>o.recommended===true);
+  if(r)return["Recommended: "+r.key+" \u00b7 "+r.text,false];
+  return[e.recommend?"Recommended: "+e.recommend:"",false];
+}
+function chev(){return $("span","chev")}
+function question(e){
+  const key=cur+"\n"+e.id,open=openQ.has(key),[sum,done]=summary(e);
+  const q=$("div","q"+(done?" done":"")),b=$("button");b.type="button";b.setAttribute("aria-expanded",open);
+  const t=$("span","qt");t.append($("span","",e.title||"(untitled)"));if(sum)t.append($("span","sum",sum));
+  b.append(chev(),$("span","tag",short(e.id)),t);
+  b.onclick=()=>{if(openQ.has(key))openQ.delete(key);else openQ.add(key);last="";paint()};
+  q.append(b);
+  if(open){const body=$("div","qb");if(e.note)addNote(body,e);addOpts(body,e);q.append(body)}
+  return q;
+}
+function tickets(ds){
+  const g=new Map();
+  ds.forEach(e=>{const k=ticketOf(e);if(!g.has(k))g.set(k,[]);g.get(k).push(e)});
+  const all=[...g].map(([name,qs],i)=>({name,qs,i,left:qs.filter(e=>e.status==="open").length}));
+  all.sort((a,b)=>(a.name===OTHER)-(b.name===OTHER)||(b.left>0)-(a.left>0)||a.i-b.i);
+  return all.map(t=>{
+    const key=cur+"\n"+t.name,open=openTk.has(key)?openTk.get(key):t.left>0;
+    const d=$("div","tk"+(t.left>0?" open":"")),b=$("button");b.type="button";b.setAttribute("aria-expanded",open);
+    b.append(chev(),$("span","nm",t.name),$("span","cnt",(t.qs.length-t.left)+" of "+t.qs.length+" answered"));
+    b.onclick=()=>{openTk.set(key,!open);last="";paint()};
+    d.append(b);if(open)t.qs.forEach(e=>d.append(question(e)));
+    return d;
+  });
 }
 function section(title,rows,none){
   const s=$("section"),h=$("h2","",title);h.append($("span","n",rows.length));s.append(h);
@@ -162,10 +224,13 @@ function section(title,rows,none){
 function render(b){
   clampChecks=[];
   const es=Array.isArray(b.entries)?b.entries:[];
-  const ds=es.filter(e=>e.kind==="decision"&&e.status==="open").map(e=>row(e,"ask","Needs you"));
+  const ds=es.filter(e=>e.kind==="decision"&&(e.status==="open"||e.status==="settled"));
+  const openIds=new Set(ds.filter(e=>e.status==="open").map(e=>e.id));
+  waiting=new Map();
+  es.forEach(e=>{if(e.kind!=="decision"&&Array.isArray(e.depends_on)){const w=e.depends_on.filter(id=>openIds.has(id));if(w.length)waiting.set(e.id,w)}});
   const tasks=es.filter(e=>e.kind!=="decision"&&e.status!=="done"&&e.status!=="cancelled").map(e=>{const [c,l]=STATUS[e.status]||["working","Working"];return [c,l||"Ready to "+ctx.word,e]});
   tasks.sort((x,y)=>ORDER.indexOf(x[0])-ORDER.indexOf(y[0]));
-  document.getElementById("board").replaceChildren(section("Decisions needed",ds,"Nothing needs you."),section("Tasks",tasks.map(([c,l,e])=>row(e,c,l)),"No tasks yet."));
+  document.getElementById("board").replaceChildren(section("Tickets",tickets(ds),"Nothing needs you."),section("Tasks",tasks.map(([c,l,e])=>row(e,c,l)),"No tasks yet."));
   fitNotes();
   const past=es.filter(e=>e.kind!=="decision"&&(e.status==="done"||e.status==="cancelled"));
   const pe=document.getElementById("past");
@@ -211,7 +276,7 @@ function renderTabs(){
   nav.hidden=fixed;if(fixed)return;
   nav.replaceChildren(...tabs.map(p=>{
     const b=$("button","",p.name);b.type="button";b.setAttribute("role","tab");b.setAttribute("aria-selected",p.name===cur);
-    if(p.needed>0){b.append($("span","badge",p.needed));b.title=p.needed+" decision"+(p.needed>1?"s":"")+" needed"}
+    if(p.needed>0){b.append($("span","badge",p.needed));b.title=p.needed+" open question"+(p.needed>1?"s":"")}
     b.onclick=()=>select(p.name);return b;
   }));
 }

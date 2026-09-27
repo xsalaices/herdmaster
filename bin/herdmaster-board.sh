@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Reads and writes ~/.claude/orchestrator/<project>/tasks.json (see docs/design/board.md).
 # Usage: herdmaster-board.sh add <task|decision> <title> [--review auto|user] [--depends ID,ID] [--note TEXT] [--recommend TEXT]
-#          decisions also take --option "A|text" (repeatable, keys A..Z) and --recommend-key K
+#          decisions also take --option "A|text" (repeatable, keys A..Z), --recommend-key K and --group "<ticket name>"
+#        herdmaster-board.sh set-group <id> <ticket name>
 #        herdmaster-board.sh set-options <id> --option "A|text" [--option "B|text"] [--recommend-key K]
 #        herdmaster-board.sh status <id> <state>
 #        herdmaster-board.sh attempt <id> <status> [feedback] [link]
@@ -73,8 +74,16 @@ options_json() {
   printf '%s\n' "$out"
 }
 
+group_name() {
+  local g; g=$(jq -rn --arg g "$1" '$g | gsub("^\\s+|\\s+$"; "")')
+  [[ -n $g ]] || die "$2: group name must not be empty"
+  (( ${#g} <= 60 )) || die "$2: group name is at most 60 characters"
+  [[ $g != *[[:cntrl:]]* ]] || die "$2: group name must be one line"
+  printf '%s\n' "$g"
+}
+
 cmd_add() {
-  local kind=${1:-} title=${2:-} review="" deps="" note="" rec="" opts="" rkey=""
+  local kind=${1:-} title=${2:-} review="" deps="" note="" rec="" opts="" rkey="" group="" has_group=""
   [[ $kind == task || $kind == decision ]] || die "add: kind must be task or decision"
   [[ -n $title ]] || die "add: title required"
   shift 2
@@ -86,6 +95,7 @@ cmd_add() {
       --recommend) rec=${2:-}; shift 2 ;;
       --option) opts+=${2:-}$'\n'; shift 2 ;;
       --recommend-key) rkey=${2:-}; shift 2 ;;
+      --group) group=${2:-}; has_group=1; shift 2 ;;
       *) die "add: unknown argument $1" ;;
     esac
   done
@@ -95,6 +105,8 @@ cmd_add() {
   [[ $review == auto || $review == user ]] || die "add: --review must be auto or user"
   [[ -z $opts && -z $rkey ]] || [[ $kind == decision ]] || die "add: --option only applies to decisions"
   [[ -z $rkey || -n $opts ]] || die "add: --recommend-key needs --option"
+  [[ -z $has_group ]] || [[ $kind == decision ]] || die "add: --group only applies to decisions"
+  [[ -z $has_group ]] || group=$(group_name "$group" add)
   local board dep_json opt_json='[]'
   [[ -z $opts ]] || opt_json=$(options_json "$opts" "$rkey")
   board=$(load)
@@ -102,7 +114,7 @@ cmd_add() {
   jq -e --argjson d "$dep_json" '. as $b | $d | all(. as $x | $b.entries | any(.id == $x))' <<<"$board" >/dev/null \
     || die "add: --depends names an unknown id"
   local out
-  out=$(jq --arg kind "$kind" --arg title "$title" --arg review "$review" --argjson deps "$dep_json" --arg note "$note" --arg rec "$rec" --argjson opts "$opt_json" --arg ts "$(now)" '
+  out=$(jq --arg kind "$kind" --arg title "$title" --arg review "$review" --argjson deps "$dep_json" --arg note "$note" --arg rec "$rec" --argjson opts "$opt_json" --arg group "$group" --arg ts "$(now)" '
     (if $kind == "task" then "T" else "D" end) as $p
     | ([.entries[] | select(.id | startswith($p + "-")) | .id[2:] | tonumber] | (max // 0) + 1) as $n
     | ($p + "-" + ("000" + ($n | tostring) | .[-3:])) as $id
@@ -111,7 +123,8 @@ cmd_add() {
         review: $review, depends_on: $deps, attempts: [], created: $ts, updated: $ts}
         + (if $note != "" then {note: $note} else {} end)
         + (if $rec != "" then {recommend: $rec} else {} end)
-        + (if ($opts | length) > 0 then {options: $opts} else {} end)]
+        + (if ($opts | length) > 0 then {options: $opts} else {} end)
+        + (if $group != "" then {group: $group} else {} end)]
     | {board: ., id: $id}' <<<"$board")
   save "$(jq .board <<<"$out")"
   jq -r .id <<<"$out"
@@ -134,6 +147,17 @@ cmd_set_options() {
   local opt_json; opt_json=$(options_json "$opts" "$rkey")
   save "$(load | jq --arg id "$id" --argjson o "$opt_json" --arg ts "$(now)" \
     '.entries |= map(if .id == $id then .options = $o | .updated = $ts else . end)')"
+}
+
+cmd_set_group() {
+  local id=${1:-} group=${2:-}
+  [[ -n $id && -n $group ]] || die "set-group: <id> <ticket name> required"
+  need_entry "$id"
+  load | jq -e --arg id "$id" 'any(.entries[]; .id == $id and .kind == "decision")' >/dev/null \
+    || die "set-group: $id is not a decision"
+  group=$(group_name "$group" set-group)
+  save "$(load | jq --arg id "$id" --arg g "$group" --arg ts "$(now)" \
+    '.entries |= map(if .id == $id then .group = $g | .updated = $ts else . end)')"
 }
 
 cmd_status() {
@@ -263,6 +287,7 @@ cmd_show() {
   load | jq -r '.entries[] | "\(.id)\t\(.status)\t\(.review)\t\(.title)"
     + (if (.depends_on | length) > 0 then "\t<- " + (.depends_on | join(",")) else "" end)
     + (if (.flags // []) | length > 0 then "\t[" + (.flags | join(",")) + "]" else "" end)
+    + (if (.group // "") != "" then "\tticket: " + .group else "" end)
     + ((.options // []) | map("\n    \(.key)) \(.text)" + (if .recommended then "  (recommended)" else "" end)) | join(""))'
 }
 
@@ -340,6 +365,7 @@ sub=${1:-}; shift || true
 case $sub in
   add) cmd_add "$@" ;;
   set-options) cmd_set_options "$@" ;;
+  set-group) cmd_set_group "$@" ;;
   status) cmd_status "$@" ;;
   attempt) cmd_attempt "$@" ;;
   supersede) cmd_supersede "$@" ;;
@@ -349,5 +375,5 @@ case $sub in
   archive) cmd_archive ;;
   count) cmd_count ;;
   show) cmd_show ;;
-  *) sed -n '2,14p' "$0"; exit 2 ;;
+  *) sed -n '2,15p' "$0"; exit 2 ;;
 esac

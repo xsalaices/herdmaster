@@ -47,6 +47,23 @@ eq "$(jq -c --arg n "$n" '.entries[] | select(.id == $n) | .options | length' "$
 eq "$("$B" show | grep -A2 "^$o")" "$(printf '%s\topen\tuser\tPick layout\n    A) One\n    D) Four  (recommended)' "$o")"
 "$B" status "$o" settled
 
+g1=$("$B" add decision "Pick colors" --group "  Theme  " --option "A|Warm" --option "B|Cool")
+eq "$(jq -r --arg g "$g1" '.entries[] | select(.id == $g) | .group' "$f")" Theme
+eq "$(jq -r --arg n "$n" '.entries[] | select(.id == $n) | .group // "none"' "$f")" none
+"$B" set-group "$n" "Layout"
+eq "$(jq -r --arg n "$n" '.entries[] | select(.id == $n) | .group' "$f")" Layout
+eq "$("$B" show | grep "^$n" | awk -F'\t' '{print $NF}')" "ticket: Layout"
+eq "$("$B" show | grep -c 'ticket:')" 2
+for bad in "--group ''" "--group '   '" "--group $(printf 'x%.0s' $(seq 61))"; do
+  eval "\"\$B\" add decision Bad $bad" 2>/dev/null && { echo "FAIL: accepted group '$bad'" >&2; exit 1; }
+done
+"$B" add task Bad --group Theme 2>/dev/null && { echo "FAIL: task with group" >&2; exit 1; }
+"$B" set-group "$t1" Theme 2>/dev/null && { echo "FAIL: set-group on task" >&2; exit 1; }
+"$B" set-group D-999 Theme 2>/dev/null && { echo "FAIL: set-group unknown id" >&2; exit 1; }
+"$B" set-group "$n" "" 2>/dev/null && { echo "FAIL: empty set-group" >&2; exit 1; }
+"$B" status "$g1" settled
+eq "$(jq '.entries | length' "$f")" 6
+
 first=$("$B" count)
 [[ $first == "Board: 1 in review (oldest 0m), 1 flagged" ]] || { echo "FAIL: count '$first'" >&2; exit 1; }
 eq "$("$B" count)" ""

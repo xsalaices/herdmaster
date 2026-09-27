@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Read-only localhost viewer for ~/.claude/orchestrator/<project>/tasks.json (see docs/design/board.md).
+"""Localhost viewer for ~/.claude/orchestrator/<project>/tasks.json (see docs/design/board.md).
+It never writes tasks.json; its one write is POST /answer, which appends a line to <project>/answers.jsonl.
 Usage: herdmaster-viewer.py [--project NAME] [--port N]
 Without a project (--project or $HERDMASTER_PROJECT) it shows a tab per ~/.claude/orchestrator/*/tasks.json.
 Port defaults to $HERDMASTER_VIEWER_PORT or 8765. Binds 127.0.0.1 only.
@@ -8,9 +9,11 @@ Single-threaded stdlib server: fine for one local viewer, swap in ThreadingHTTPS
 import argparse
 import errno
 import fcntl
+import hmac
 import json
 import os
 import re
+import secrets
 import stat
 import subprocess
 import sys
@@ -49,6 +52,8 @@ h2 .n{font-weight:600}
 .opt{display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px}
 .opt .k{flex:none;min-width:1.7em;text-align:center;font:700 13px/1.5 ui-monospace,Menlo,monospace;border-radius:6px;padding:0 6px;color:var(--review);background:color-mix(in srgb,var(--review) 14%,transparent)}
 .opt .x{flex:1;min-width:0;font-size:15px;overflow-wrap:anywhere}
+button.opt{width:100%;text-align:left;font:inherit;color:inherit;background:none;cursor:pointer}
+button.opt:hover{border-color:var(--review)}
 .opt.best{border-color:var(--ask);background:color-mix(in srgb,var(--ask) 9%,transparent)}
 .opt.best .k{color:var(--bg);background:var(--ask)}
 .opt .star{flex:none;align-self:center;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ask);border:1px solid var(--ask);border-radius:999px;padding:1px 8px}
@@ -82,6 +87,10 @@ h2 .n{font-weight:600}
 .q.done .sum{color:var(--ready)}
 .qb{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 12px 14px}
 .qb .opts{margin:2px 0}
+.cf{flex-basis:100%;display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px}
+.cf button{font:inherit;font-size:13px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);padding:3px 12px;cursor:pointer}
+.cf button.yes{border-color:var(--review);color:var(--review);font-weight:600}
+.cf .err{color:var(--fail)}
 .warn{color:var(--fail);font-size:13px;margin-left:8px}
 .ask{--c:var(--ask)}.review{--c:var(--review)}.working{--c:var(--work)}.ready{--c:var(--ready)}.failed{--c:var(--fail)}
 .empty{color:var(--mute);padding:12px 2px}
@@ -140,6 +149,7 @@ h1{font-size:14px;font-weight:600;letter-spacing:.02em;margin:0;color:var(--mute
 <div id="past"></div>
 </main>
 <script>
+const TOKEN="__HERDMASTER_TOKEN__";
 const $=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
 const STATUS={"in review":["review","In review"],"finished":["review","In review"],"working":["working","Working"],"blocked":["working","Working"],"approved":["working","Working"],"paused":["working","Paused"],"deploy-ready":["ready",null],"failed":["failed","Failed"]};
 const ORDER=["review","failed","working","ready"];
@@ -221,13 +231,41 @@ function addNote(r,e){
   if(!open)clampChecks.push([n,b]);
 }
 function optsOf(e){return Array.isArray(e.options)?e.options.filter(o=>o&&typeof o.key==="string"&&typeof o.text==="string"):[]}
+const NO_BUTTON=/^(merge|deploy|push)/i;
+const pending=new Map(),sent=new Map(),failedAns=new Map();
+function answerable(e,o){return e.kind==="decision"&&e.status==="open"&&!NO_BUTTON.test(o.text.trim())}
+async function answer(e,k){
+  const qk=cur+"\n"+e.id;
+  let err="Could not send the answer.";
+  try{
+    const r=await fetch("/answer",{method:"POST",cache:"no-store",headers:{"Content-Type":"application/json","X-Herdmaster-Token":TOKEN},body:JSON.stringify({project:cur,id:e.id,key:k})});
+    if(r.ok){sent.set(qk,k);failedAns.delete(qk);err=""}else{try{err=(await r.json()).error||err}catch(_){}}
+  }catch(_){}
+  pending.delete(qk);if(err)failedAns.set(qk,err);last="";paint();
+}
+function confirmRow(e,qk){
+  const c=$("div","cf"),k=pending.get(qk);
+  if(k!==undefined){
+    const y=$("button","yes","Yes"),n=$("button","","Cancel");y.type=n.type="button";
+    y.onclick=()=>{y.disabled=true;answer(e,k)};n.onclick=()=>{pending.delete(qk);last="";paint()};
+    c.append($("span","","Confirm answer "+k+"?"),y,n);
+  }else if(sent.has(qk))c.append($("span","","Sent "+sent.get(qk)+". The orchestrator will settle it."));
+  else if(failedAns.has(qk))c.append($("span","err",failedAns.get(qk)));
+  return c.childNodes.length?c:null;
+}
 function addOpts(r,e){
-  const os=optsOf(e);
+  const os=optsOf(e),qk=cur+"\n"+e.id;
   if(os.length){
     const ul=$("ul","opts");
-    os.forEach(o=>{const li=$("li","opt"+(o.recommended===true?" best":""));li.append($("span","k",o.key),$("span","x",o.text));
-      if(o.recommended===true)li.append($("span","star","Recommended"));ul.append(li)});
+    os.forEach(o=>{const cls="opt"+(o.recommended===true?" best":"");
+      let li,box;
+      if(answerable(e,o)&&!sent.has(qk)){li=$("li");box=$("button",cls);box.type="button";box.title="Answer "+o.key;
+        box.onclick=()=>{pending.set(qk,o.key);failedAns.delete(qk);last="";paint()};li.append(box)}
+      else li=box=$("li",cls);
+      box.append($("span","k",o.key),$("span","x",o.text));
+      if(o.recommended===true)box.append($("span","star","Recommended"));ul.append(li)});
     r.append(ul);
+    const c=e.status==="open"&&confirmRow(e,qk);if(c)r.append(c);
   }
   if(e.recommend)r.append($("div","rec",(os.length?"Why: ":"Recommended: ")+e.recommend));
 }
@@ -408,6 +446,10 @@ poll().then(follow);setInterval(poll,3000);setInterval(follow,500);
 PAGE_CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'; "
             "connect-src 'self'; base-uri 'none'; frame-ancestors 'none'")
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+TOKEN_SLOT = "__HERDMASTER_TOKEN__"
+TOKEN_PATH = "~/.claude/herdmaster/viewer-token"
+BODY_MAX = 4096
+NO_ANSWER_PREFIXES = ("merge", "deploy", "push")
 
 
 def read_json(path):
@@ -574,7 +616,65 @@ def host_allowed(handler):
     return handler.headers.get("Host") in ("127.0.0.1:%d" % port, "localhost:%d" % port, "[::1]:%d" % port)
 
 
-def make_handler(fixed, root):
+class AnswerError(Exception):
+    def __init__(self, code, msg):
+        self.code, self.msg = code, msg
+
+
+def check_answer(root, fixed, body):
+    """Returns the validated {"project","id","key"} or raises AnswerError(400)."""
+    try:
+        doc = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise AnswerError(400, "Body is not valid JSON")
+    if not isinstance(doc, dict) or set(doc) != {"project", "id", "key"} or not all(isinstance(v, str) for v in doc.values()):
+        raise AnswerError(400, "Body must be {project, id, key} strings")
+    project, did, key = doc["project"], doc["id"], doc["key"]
+    if not NAME_RE.fullmatch(project) or ".." in project or (fixed and project != fixed):
+        raise AnswerError(400, "Invalid project name")
+    board = read_board(root, project)
+    if board is None:
+        raise AnswerError(400, "Unknown project")
+    entries = board.get("entries")
+    entry = next((e for e in entries if isinstance(e, dict) and e.get("id") == did), None) if isinstance(entries, list) else None
+    if entry is None:
+        raise AnswerError(400, "Unknown decision")
+    if entry.get("kind") != "decision" or entry.get("status") != "open":
+        raise AnswerError(400, "Not an open decision")
+    opts = entry.get("options") if isinstance(entry.get("options"), list) else []
+    opt = next((o for o in opts if isinstance(o, dict) and o.get("key") == key and isinstance(o.get("text"), str)), None)
+    if opt is None:
+        raise AnswerError(400, "Unknown option key")
+    if opt["text"].strip().lower().startswith(NO_ANSWER_PREFIXES):
+        raise AnswerError(400, "Merge, deploy and push are answered in chat, not from the page")
+    return {"project": project, "id": did, "key": key}
+
+
+def append_answer(root, ans):
+    line = json.dumps(dict(ans, at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())), separators=(",", ":")) + "\n"
+    d = os.path.join(root, ans["project"])
+    os.makedirs(d, exist_ok=True)
+    fd = os.open(os.path.join(d, "answers.jsonl"), os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        os.write(fd, line.encode())
+    finally:
+        os.close(fd)
+
+
+def write_token(token):
+    path = os.path.expanduser(TOKEN_PATH)
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        os.write(fd, token.encode())
+    finally:
+        os.close(fd)
+
+
+def make_handler(fixed, root, token):
+    page = PAGE.replace(TOKEN_SLOT, token)
+
     class Handler(BaseHTTPRequestHandler):
         timeout = 5
 
@@ -628,14 +728,11 @@ def make_handler(fixed, root):
 
         def do_GET(self):
             if not host_allowed(self):
-                self.send_response(403)
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-                return
+                return self._forbidden()
             u = urlsplit(self.path)
             route = u.path
             if route in ("/", "/index.html"):
-                self._send(200, PAGE, "text/html; charset=utf-8", (("Content-Security-Policy", PAGE_CSP),))
+                self._send(200, page, "text/html; charset=utf-8", (("Content-Security-Policy", PAGE_CSP),))
             elif route == "/project" and fixed:
                 self._send(200, fixed, "text/plain; charset=utf-8")
             elif route == "/projects.json":
@@ -682,7 +779,45 @@ def make_handler(fixed, root):
             self.send_header("Content-Length", "0")
             self.end_headers()
 
-        do_POST = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = _deny
+        do_PUT = do_DELETE = do_PATCH = do_OPTIONS = _deny
+
+        def _forbidden(self):
+            self.send_response(403)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def do_POST(self):
+            if not host_allowed(self):
+                return self._forbidden()
+            if urlsplit(self.path).path != "/answer":
+                return self._deny()
+            try:
+                lengths = self.headers.get_all("Content-Length") or []
+                length = int(lengths[0]) if len(lengths) == 1 else -1
+            except ValueError:
+                return self._json_error(400, "Content-Length required")
+            if length < 0:
+                return self._json_error(400, "Content-Length required")
+            if length > BODY_MAX:
+                return self._json_error(413, "Body too large")
+            if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
+                return self._json_error(415, "Content-Type must be application/json")
+            given = self.headers.get("X-Herdmaster-Token") or ""
+            if not hmac.compare_digest(given.encode("utf-8", "surrogateescape"), token.encode()):
+                return self._forbidden()
+            body = self.rfile.read(min(length, BODY_MAX + 1))
+            if len(body) > BODY_MAX:
+                return self._json_error(413, "Body too large")
+            if len(body) != length:
+                return self._json_error(400, "Body shorter than Content-Length")
+            try:
+                ans = check_answer(root, fixed, body)
+                append_answer(root, ans)
+            except AnswerError as e:
+                return self._json_error(e.code, e.msg)
+            except OSError as e:
+                return self._json_error(500, "Cannot record answer: %s" % e.strerror)
+            self._send(200, json.dumps({"ok": True}), "application/json")
 
         def do_HEAD(self):
             self._deny()
@@ -694,19 +829,21 @@ def make_handler(fixed, root):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Read-only board viewer on 127.0.0.1")
+    ap = argparse.ArgumentParser(description="Board viewer on 127.0.0.1")
     ap.add_argument("--project", default=os.environ.get("HERDMASTER_PROJECT"))
     ap.add_argument("--port", type=int, default=int(os.environ.get("HERDMASTER_VIEWER_PORT", "8765")))
     a = ap.parse_args()
     if a.project and (not NAME_RE.fullmatch(a.project) or ".." in a.project):
         sys.exit("herdmaster-viewer: invalid project name '%s'" % a.project)
     root = os.path.expanduser("~/.claude/orchestrator")
+    token = secrets.token_urlsafe(32)
     try:
-        srv = HTTPServer(("127.0.0.1", a.port), make_handler(a.project, root))
+        srv = HTTPServer(("127.0.0.1", a.port), make_handler(a.project, root, token))
     except OSError as e:
         if e.errno != errno.EADDRINUSE:
             raise
         sys.exit("herdmaster-viewer: port %d is already in use; pass --port N to pick another" % a.port)
+    write_token(token)
     print("herdmaster viewer: http://127.0.0.1:%d/ (%s)" % (srv.server_address[1], "project " + a.project if a.project else "all projects"), flush=True)
     try:
         srv.serve_forever()

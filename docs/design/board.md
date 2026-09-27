@@ -32,6 +32,8 @@ Top level: `schema_version` and `entries[]`. Viewers ignore unknown fields.
 | `note` | Optional one or two lines of context shown under the title |
 | `recommend` | Optional, for decisions: the planner's recommended answer and why |
 | `options` | Optional, for decisions: `[{"key": "A", "text": "...", "recommended": true}]`; keys are unique single letters A-Z, at most one recommended. `recommend` stays the reason. Boards without `options` keep working and render the note only |
+| `group` | Optional, for decisions: the ticket this question belongs to, one line of at most 60 characters (e.g. the feature name). Ungrouped questions show under a ticket named `Other` |
+| `answer` | Optional, for settled decisions: the answer, one line, set with `status <id> settled "<answer>"` |
 | `release_when_done` | Optional task boolean; when true the orchestrator takes the task to the project's release step once it is done |
 | `attempts[]` | Each: `status`, `feedback`, PR or pane link |
 | `created`, `updated` | ISO 8601 timestamps |
@@ -70,6 +72,10 @@ Top level: `schema_version` and `entries[]`. Viewers ignore unknown fields.
 ```
 
 Set options with `herdmaster-board.sh add decision "Sidebar or top nav" --note "..." --recommend "why" --option "A|Sidebar" --option "B|Top nav" --recommend-key B`. `herdmaster-board.sh set-options D-007 --option "A|Sidebar" --option "B|Top nav" [--recommend-key B]` replaces the options of an existing decision; `show` prints them under the entry.
+
+Tickets: a ticket is a group of related questions, one collapsible block in the viewer's Tickets column. The stored kind stays `decision`; the UI says "ticket" for the group and "question" for each decision in it. `herdmaster-board.sh add decision "..." --group "Navigation redesign"` files a question under a ticket, `set-group <id> "<name>"` moves an existing one, and `show` prints `ticket: <name>` on the entry. Groups have no entry of their own: a ticket exists while a non-superseded question names it. Boards without `group` keep working; all their questions land under `Other`.
+
+The viewer header reads "N of M answered" (settled over open plus settled; superseded questions are left out). A ticket opens by default when it holds an open question and is collapsed otherwise. Each question row shows its title and the recommended answer (the recommended option, else `recommend`) and expands to the options and note; a settled question shows its `answer`, or "Settled" when none was recorded. A task whose `depends_on` names an open decision shows "waiting on D7" (the short handle of `D-007`).
 
 ## Lifecycles
 

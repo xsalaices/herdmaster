@@ -45,7 +45,7 @@ Model names are variables: `$HERDMASTER_MODEL_DEFAULT`, `$HERDMASTER_MODEL_DEEP`
 ## How to escalate
 
 - **Blocking:** {{send}} the master (name in `master`). Short: the question, 2-3 options, your recommendation first, what's blocked. Keep working on everything unblocked.
-- **Not blocking:** add an open decision to the board (question and context in `--note`, why you recommend it in `--recommend`, PR or pane links); put each option in its own `--option "A|text"` and mark yours with `--recommend-key`, never as A)/B) inside the note; do not message the master. The user sees it through the master's count line.
+- **Not blocking:** add an open decision to the board (question and context in `--note`, why you recommend it in `--recommend`, PR or pane links); put each option in its own `--option "A|text"` and mark yours with `--recommend-key`, never as A)/B) inside the note; file related questions under one `--group "<ticket>"` (the feature or design area, e.g. the feature name) so the owner sees them as one ticket, and settle with `status <id> settled "<answer>"`; do not message the master. The user sees it through the master's count line.
 - **Open decisions never disappear.** They never expire, are never dropped and are never re-pinged. They end only as `settled` or `superseded`; a superseded decision flags every task that depends on it.
 - Never use {{modal_tool}} or any modal prompt in your own pane; a modal freezes the whole fleet.
 - Never push results, merges, "done" notices or progress to the master. Those go in `status.md`.

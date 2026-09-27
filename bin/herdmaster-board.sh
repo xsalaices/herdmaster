@@ -4,7 +4,7 @@
 #          decisions also take --option "A|text" (repeatable, keys A..Z), --recommend-key K and --group "<ticket name>"
 #        herdmaster-board.sh set-group <id> <ticket name>
 #        herdmaster-board.sh set-options <id> --option "A|text" [--option "B|text"] [--recommend-key K]
-#        herdmaster-board.sh status <id> <state>
+#        herdmaster-board.sh status <id> <state> [answer]     (answer only when settling a decision)
 #        herdmaster-board.sh attempt <id> <status> [feedback] [link]
 #        herdmaster-board.sh supersede <id>
 #        herdmaster-board.sh release-when-done <id> [true|false]
@@ -161,13 +161,15 @@ cmd_set_group() {
 }
 
 cmd_status() {
-  local id=${1:-} state=${2:-}
+  local id=${1:-} state=${2:-} answer=${3:-}
   [[ -n $id && -n $state ]] || die "status: <id> <state> required"
   need_entry "$id"
   local kind; kind=$(load | jq -r --arg id "$id" '.entries[] | select(.id == $id) | .kind')
   valid_state "$kind" "$state" || die "status: '$state' is not a valid $kind state"
-  save "$(load | jq --arg id "$id" --arg s "$state" --arg ts "$(now)" \
-    '.entries |= map(if .id == $id then .status = $s | .updated = $ts else . end)')"
+  [[ -z $answer ]] || [[ $kind == decision && $state == settled ]] || die "status: an answer only goes with settling a decision"
+  save "$(load | jq --arg id "$id" --arg s "$state" --arg a "$answer" --arg ts "$(now)" \
+    '.entries |= map(if .id == $id then .status = $s | .updated = $ts
+      | if $a != "" then .answer = $a else . end else . end)')"
 }
 
 cmd_attempt() {
@@ -375,5 +377,5 @@ case $sub in
   archive) cmd_archive ;;
   count) cmd_count ;;
   show) cmd_show ;;
-  *) sed -n '2,15p' "$0"; exit 2 ;;
+  *) sed -n '2,16p' "$0"; exit 2 ;;
 esac

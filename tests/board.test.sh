@@ -61,7 +61,10 @@ done
 "$B" set-group "$t1" Theme 2>/dev/null && { echo "FAIL: set-group on task" >&2; exit 1; }
 "$B" set-group D-999 Theme 2>/dev/null && { echo "FAIL: set-group unknown id" >&2; exit 1; }
 "$B" set-group "$n" "" 2>/dev/null && { echo "FAIL: empty set-group" >&2; exit 1; }
-"$B" status "$g1" settled
+"$B" status "$g1" settled "B, cool palette"
+eq "$(jq -r --arg g "$g1" '.entries[] | select(.id == $g) | .answer' "$f")" "B, cool palette"
+"$B" status "$t1" done "nope" 2>/dev/null && { echo "FAIL: answer on task" >&2; exit 1; }
+"$B" status "$n" superseded "nope" 2>/dev/null && { echo "FAIL: answer on non-settle" >&2; exit 1; }
 eq "$(jq '.entries | length' "$f")" 6
 
 first=$("$B" count)

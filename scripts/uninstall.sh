@@ -23,7 +23,7 @@ case $HERDMASTER_HOME in "$CLAUDE_DIR"/?*) ;; *) echo "HERDMASTER_HOME must be i
 
 run() { if (( DRY )); then echo "[dry-run] $*"; else "$@"; fi; }
 
-for j in cpu-reaper pressure-check viewer blocked-pane-watcher; do
+for j in cpu-reaper pressure-check viewer notify blocked-pane-watcher; do
   p="$LA_DIR/com.herdmaster.$j.plist"
   [[ -f $p ]] || continue
   run launchctl bootout "gui/$(id -u)/com.herdmaster.$j" || true
@@ -56,7 +56,7 @@ for a in lookup worker deep; do
   if cmp -s "$dest" "$REPO/agents/$a.md"; then run rm -f "$dest"; else echo "keep agent $a: $dest differs from the shipped copy"; fi
 done
 
-for f in pressure-check.sh pressure-guard.sh cpu-reaper.sh blocked-pane-watcher.sh herdmaster-board.sh herdmaster-layout.sh herdmaster-viewer.py herdmaster-labels.sh herdmaster-agent.sh; do
+for f in pressure-check.sh pressure-guard.sh cpu-reaper.sh blocked-pane-watcher.sh herdmaster-board.sh herdmaster-layout.sh herdmaster-viewer.py herdmaster-labels.sh herdmaster-agent.sh herdmaster-notify.sh; do
   [[ -f $HERDMASTER_HOME/bin/$f ]] && run rm -f "$HERDMASTER_HOME/bin/$f"
 done
 [[ -f $HERDMASTER_HOME/adapters/claude.sh ]] && { run rm -f "$HERDMASTER_HOME/adapters/claude.sh"; run rmdir "$HERDMASTER_HOME/adapters" 2>/dev/null || true; }

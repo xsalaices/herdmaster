@@ -10,7 +10,7 @@
 #        herdmaster-board.sh supersede <id>
 #        herdmaster-board.sh release-when-done <id> [true|false]
 #        herdmaster-board.sh settings get [key] | settings set <key> <value>
-#          keys: release, grid_panes, worker_layout, max_panes, herdr_workspace, agent, agent_planner, agent_orchestrator, agent_worker
+#          keys: release, grid_panes, worker_layout, max_panes, herdr_workspace, notify, agent, agent_planner, agent_orchestrator, agent_worker
 #        herdmaster-board.sh import-legacy
 #        herdmaster-board.sh archive
 #        herdmaster-board.sh count | show
@@ -260,7 +260,7 @@ cmd_settings() {
   case $op in
     get)
       if [[ -z $key ]]; then settings_json | jq -S .; return; fi
-      [[ $key =~ ^(release|grid_panes|worker_layout|max_panes|herdr_workspace|agent|agent_planner|agent_orchestrator|agent_worker)$ ]] || die "settings: unknown key '$key'"
+      [[ $key =~ ^(release|grid_panes|worker_layout|max_panes|herdr_workspace|notify|agent|agent_planner|agent_orchestrator|agent_worker)$ ]] || die "settings: unknown key '$key'"
       settings_json | jq -r --arg k "$key" '(.[$k] // if $k == "release" then "deploy"
         elif $k | startswith("agent") then .agent // "claude" else empty end) | tostring' ;;
     set)
@@ -274,6 +274,8 @@ cmd_settings() {
         grid_panes|max_panes) [[ $val =~ ^[1-9][0-9]*$ ]] || die "settings: $key must be a positive integer"
           json=$val ;;
         herdr_workspace) [[ $val =~ ^[A-Za-z0-9._:-]+$ ]] || die "settings: herdr_workspace must be a herdr workspace id"
+          json=$(jq -cn --arg v "$val" '$v') ;;
+        notify) [[ $val == on || $val == off ]] || die "settings: notify must be on or off"
           json=$(jq -cn --arg v "$val" '$v') ;;
         agent|agent_planner|agent_orchestrator|agent_worker)
           [[ $val =~ ^[a-z0-9-]+$ && -f $(dirname "$0")/../adapters/$val.sh ]] || die "settings: $key must name an adapter in adapters/"

@@ -113,6 +113,15 @@ const STATUS={"in review":["review","In review"],"finished":["review","In review
 const ORDER=["review","failed","working","ready"];
 const short=id=>(id||"").replace(/-0*/,"");
 const openNotes=new Set();
+let clampChecks=[];
+function fitNotes(){
+  clampChecks=clampChecks.filter(([n,b])=>{
+    if(!n.isConnected)return false;
+    if(!n.clientHeight)return true;
+    if(n.scrollHeight>n.clientHeight)b.hidden=false;else{n.classList.remove("clamp");b.remove()}
+    return false;
+  });
+}
 let ctx={suffix:"",word:"deploy",settings:{}},pastOpen=false,showAll=false;
 const KEYS=["release","grid_panes","worker_layout","max_panes","herdr_workspace"];
 const prefs={theme:"auto",done:10,tab:"",follow:true};
@@ -131,11 +140,10 @@ function row(e,cls,label,past){
   const os=Array.isArray(e.options)?e.options.filter(o=>o&&typeof o.key==="string"&&typeof o.text==="string"):[];
   if(e.note){
     const n=$("div","note",e.note);r.append(n);
-    if(os.length&&e.note.length>120){
-      const open=openNotes.has(e.id);if(!open)n.classList.add("clamp");
-      const b=$("button","exp",open?"Show less":"Show more");b.type="button";b.setAttribute("aria-expanded",open);
-      b.onclick=()=>{if(openNotes.has(e.id))openNotes.delete(e.id);else openNotes.add(e.id);last="";tick()};r.append(b);
-    }
+    const open=openNotes.has(e.id);if(!open)n.classList.add("clamp");
+    const b=$("button","exp",open?"Show less":"Show more");b.type="button";b.setAttribute("aria-expanded",open);b.hidden=!open;
+    b.onclick=()=>{if(openNotes.has(e.id))openNotes.delete(e.id);else openNotes.add(e.id);last="";tick()};r.append(b);
+    if(!open)clampChecks.push([n,b]);
   }
   if(os.length){
     const ul=$("ul","opts");
@@ -152,20 +160,22 @@ function section(title,rows,none){
   rows.forEach(r=>s.append(r));return s;
 }
 function render(b){
+  clampChecks=[];
   const es=Array.isArray(b.entries)?b.entries:[];
   const ds=es.filter(e=>e.kind==="decision"&&e.status==="open").map(e=>row(e,"ask","Needs you"));
   const tasks=es.filter(e=>e.kind!=="decision"&&e.status!=="done"&&e.status!=="cancelled").map(e=>{const [c,l]=STATUS[e.status]||["working","Working"];return [c,l||"Ready to "+ctx.word,e]});
   tasks.sort((x,y)=>ORDER.indexOf(x[0])-ORDER.indexOf(y[0]));
   document.getElementById("board").replaceChildren(section("Decisions needed",ds,"Nothing needs you."),section("Tasks",tasks.map(([c,l,e])=>row(e,c,l)),"No tasks yet."));
+  fitNotes();
   const past=es.filter(e=>e.kind!=="decision"&&(e.status==="done"||e.status==="cancelled"));
   const pe=document.getElementById("past");
   if(!past.length){pe.replaceChildren();return}
   past.sort((x,y)=>String(y.updated||"").localeCompare(String(x.updated||"")));
   const d=$("details"),s=$("summary","","Done");s.append(" ",$("span","n",past.length));d.append(s);d.open=pastOpen;
-  d.ontoggle=()=>{pastOpen=d.open};
+  d.ontoggle=()=>{pastOpen=d.open;fitNotes()};
   past.slice(0,showAll?past.length:prefs.done).forEach(e=>d.append(row(e,"working",e.status==="cancelled"?"cancelled":"done",true)));
   if(past.length>prefs.done){const m=$("button","more",showAll?"show fewer":"show all "+past.length);m.type="button";m.onclick=()=>{showAll=!showAll;last="";tick()};d.append(m)}
-  pe.replaceChildren(d);
+  pe.replaceChildren(d);fitNotes();
 }
 let last="",lastPanel="",tabs=[],fixed=true,cur=null,picked=false,seen;
 function sel(opts,val,onchange,label){

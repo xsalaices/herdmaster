@@ -49,6 +49,10 @@ echo '{"entries":[{"id":"D-001","kind":"decision","status":"open","title":"a","o
 [[ $(curl -s "$B/tasks.json?project=alpha" | jq -c '.entries[0].options | map(.key + (.recommended | tostring))') == '["Afalse","Btrue"]' ]] || fail "options round-trip"
 curl -s "$B/" | grep -q 'className="opts"\|"ul","opts"' || fail "options list rendering"
 curl -s "$B/" | grep -q '"Recommended"' || fail "recommended tag"
+curl -s "$B/" | grep -q 'scrollHeight>n.clientHeight' || fail "note clamp measure"
+curl -s "$B/" | grep -q 'n.classList.remove("clamp");b.remove()' || fail "short note drops clamp and toggle"
+curl -s "$B/" | grep -q 'e.note.length>120' && fail "toggle must not depend on note length"
+curl -s "$B/" | grep -q 'b.hidden=!open' || fail "toggle hidden until measured"
 curl -s "$B/" | grep -q 'id="cog"' || fail "settings cog"
 [[ $(code "$B/tasks.json") == 400 ]] || fail "missing project should be 400"
 for bad in '..' '../x' '%2e%2e%2fx' '.hidden' 'a%2fb' '..%2f..%2fetc'; do

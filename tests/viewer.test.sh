@@ -72,7 +72,7 @@ PID3=$!
 for _ in $(seq 50); do curl -s "http://127.0.0.1:$PORT3/" >/dev/null 2>&1 && break; sleep 0.1; done
 F="http://127.0.0.1:$PORT3/focus.json"
 [[ $(curl -s "$F" | jq -c .) == '{"project":"beta","workspace":"w11"}' ]] || fail "focus mapped"
-echo w9 > "$T/focus"; sleep 1.2
+echo w9 > "$T/focus"; sleep 0.4
 [[ $(curl -s "$F" | jq -c .) == '{"project":null,"workspace":"w9"}' ]] || fail "focus unmapped"
 kill "$PID3"; wait "$PID3" 2>/dev/null || true
 printf '#!/bin/sh\nexit 1\n' > "$T/herdr-bad"; chmod +x "$T/herdr-bad"

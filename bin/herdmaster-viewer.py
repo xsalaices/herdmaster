@@ -218,7 +218,7 @@ async function follow(){
     if(p&&tabs.some(t=>t.name===p)&&p!==cur){cur=p;picked=true;last="";tick()}
   }catch(_){}
 }
-tick().then(follow);setInterval(tick,3000);setInterval(follow,2000);
+tick().then(follow);setInterval(tick,3000);setInterval(follow,500);
 </script></body></html>
 """
 
@@ -265,7 +265,7 @@ _focus = {"at": float("-inf"),"workspace": None}
 
 
 def focused_workspace():
-    if time.monotonic() - _focus["at"] < 1:
+    if time.monotonic() - _focus["at"] < 0.25:
         return _focus["workspace"]
     ws = None
     try:

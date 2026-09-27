@@ -87,16 +87,25 @@ u=$("$B" add decision "Pick tone" --option "A|Formal" --option "B|Casual")
 eq "$(jq -r --arg u "$u" '.entries[] | select(.id == $u) | .status' "$f")" open
 "$B" settle "$u" --answer A --answer-text "Formal"
 eq "$(jq -c --arg u "$u" '.entries[] | select(.id == $u) | [.status, .answer]' "$f")" '["settled","Formal"]'
-m=$("$B" add decision "Release" --option "A|Merge to main" --option "B|$(printf '\xef\xbb\xbf')deploy now" --option "C|$(printf '\xe2\x80\x8b')PUSH" --option "D|Wait, then merge")
-for k in A B C; do
+m=$("$B" add decision "Release" --option "A|Merge to main" --option "B|$(printf '\xef\xbb\xbf')deploy now" --option "C|$(printf '\xe2\x80\x8b')PUSH" --option "D|Wait, then merge" --option "E|All done")
+for k in A B C D; do
   txt=$(jq -r --arg m "$m" --arg k "$k" '.entries[] | select(.id == $m) | .options[] | select(.key == $k) | .text' "$f")
   "$B" settle "$m" --answer "$k" --answer-text "$txt" 2>/dev/null && { echo "FAIL: settled release option $k" >&2; exit 1; }
   "$B" settle "$m" --answer "$k" 2>/dev/null && { echo "FAIL: settled release option $k without text" >&2; exit 1; }
 done
 eq "$(jq -r --arg m "$m" '.entries[] | select(.id == $m) | .status' "$f")" open
-"$B" settle "$m" --answer D --answer-text "Wait, then merge"
-eq "$(jq -r --arg m "$m" '.entries[] | select(.id == $m) | .answer' "$f")" "Wait, then merge"
+"$B" settle "$m" --answer E --answer-text "All done"
+eq "$(jq -r --arg m "$m" '.entries[] | select(.id == $m) | .answer' "$f")" "All done"
 eq "$(jq '.entries | length' "$f")" 10
+
+up=$("$B" add decision "Timing" --option "A|Now" --option "B|Later")
+at_old="2000-01-01T00:00:00Z"
+"$B" settle "$up" --answer A --answer-at "$at_old" 2>/dev/null && { echo "FAIL: settled with a stale --answer-at" >&2; exit 1; }
+eq "$(jq -r --arg u "$up" '.entries[] | select(.id == $u) | .status' "$f")" open
+at_now=$(jq -r --arg u "$up" '.entries[] | select(.id == $u) | .updated' "$f")
+"$B" settle "$up" --answer A --answer-at "$at_now"
+eq "$(jq -r --arg u "$up" '.entries[] | select(.id == $u) | .status' "$f")" settled
+eq "$(jq '.entries | length' "$f")" 11
 
 r=$("$B" add task "Review me")
 "$B" set-review "$r" --summary "Adds a panel" --diff "main..feat" --tests "12 passed" --preview "http://127.0.0.1:5173/" --screenshot /private/tmp/claude-501/a.png --screenshot /private/tmp/claude-501/b.png --link "Docs|https://example.com/d" --link "PR|https://example.com/pr/1"
@@ -143,6 +152,65 @@ eq "$(jq -r '.grid_panes | type' "$s")" number
 eq "$("$B" settings get herdr_workspace)" w11
 "$B" settings set herdr_workspace 'a b' 2>/dev/null && { echo "FAIL: bad workspace accepted" >&2; exit 1; }
 "$B" settings set grid_panes 0 2>/dev/null && { echo "FAIL: bad grid accepted" >&2; exit 1; }
+
+adir="$T/.claude/orchestrator/demo"
+eq "$("$B" consume-answers demo)" "settled 0, refused 0"
+[[ ! -e "$adir/answers.done.jsonl" ]] || { echo "FAIL: nothing to consume should not create answers.done.jsonl" >&2; exit 1; }
+
+ca1=$("$B" add decision "Pick spacing" --option "A|Compact" --option "B|Comfortable")
+ca2=$("$B" add decision "Pick weight" --option "A|Light" --option "B|Bold")
+now_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+{
+  printf '{"project":"demo","id":"%s","key":"B","text":"Comfortable","at":"%s"}\n' "$ca1" "$now_ts"
+  printf '{"project":"other","id":"%s","key":"A","text":"Light","at":"%s"}\n' "$ca2" "$now_ts"
+} > "$adir/answers.jsonl"
+out=$("$B" consume-answers demo)
+eq "$(head -1 <<<"$out")" "settled 1, refused 1"
+eq "$(jq -r --arg id "$ca1" '.entries[] | select(.id == $id) | .status' "$f")" settled
+eq "$(jq -r --arg id "$ca1" '.entries[] | select(.id == $id) | .answer' "$f")" "Comfortable"
+eq "$(jq -r --arg id "$ca2" '.entries[] | select(.id == $id) | .status' "$f")" open
+[[ ! -e "$adir/answers.jsonl" ]] || { echo "FAIL: no concurrent write, answers.jsonl should be gone" >&2; exit 1; }
+eq "$(wc -l < "$adir/answers.done.jsonl" | tr -d ' ')" 2
+eq "$(jq -r --arg id "$ca1" 'select(.id == $id) | .result' "$adir/answers.done.jsonl")" settled
+eq "$(jq -r --arg id "$ca2" 'select(.id == $id) | .result' "$adir/answers.done.jsonl")" refused
+eq "$(jq -r --arg id "$ca2" 'select(.id == $id) | has("reason")' "$adir/answers.done.jsonl")" true
+
+# A line whose answer predates the decision's last change (e.g. it was reopened) is refused, not reconsidered.
+ca3=$("$B" add decision "Pick tone" --option "A|Warm" --option "B|Cool")
+stale_at=$(jq -r --arg id "$ca3" '.entries[] | select(.id == $id) | .updated' "$f")
+sleep 1.1
+"$B" status "$ca3" open
+printf '{"project":"demo","id":"%s","key":"B","text":"Cool","at":"%s"}\n' "$ca3" "$stale_at" > "$adir/answers.jsonl"
+eq "$("$B" consume-answers demo | head -1)" "settled 0, refused 1"
+eq "$(jq -r --arg id "$ca3" '.entries[] | select(.id == $id) | .status' "$f")" open
+eq "$(wc -l < "$adir/answers.done.jsonl" | tr -d ' ')" 3
+
+"$B" consume-answers other 2>/dev/null && { echo "FAIL: consume-answers rejects mismatched project" >&2; exit 1; }
+
+# Atomicity: a line appended to the fresh answers.jsonl left behind by consume-answers's rename is never lost.
+race_ids=()
+for i in $(seq 1 40); do race_ids+=("$("$B" add decision "Race $i" --option "A|Yes $i" --option "B|No $i")"); done
+race_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+: > "$adir/answers.jsonl"
+for id in "${race_ids[@]}"; do
+  txt=$(jq -r --arg id "$id" '.entries[] | select(.id == $id) | .options[0].text' "$f")
+  printf '{"project":"demo","id":"%s","key":"A","text":"%s","at":"%s"}\n' "$id" "$txt" "$race_ts" >> "$adir/answers.jsonl"
+done
+before_done=$(wc -l < "$adir/answers.done.jsonl" | tr -d ' ')
+"$B" consume-answers demo > "$T/race.out" &
+race_pid=$!
+sleep 0.15
+printf '{"project":"demo","id":"bogus","key":"A","text":"x","at":"1970-01-01T00:00:00Z"}\n' > "$adir/answers.jsonl"
+wait "$race_pid"
+eq "$(head -1 "$T/race.out")" "settled 40, refused 0"
+[[ -f "$adir/answers.jsonl" ]] || { echo "FAIL: concurrently-appended answers.jsonl lost" >&2; exit 1; }
+eq "$(cat "$adir/answers.jsonl")" '{"project":"demo","id":"bogus","key":"A","text":"x","at":"1970-01-01T00:00:00Z"}'
+eq "$(wc -l < "$adir/answers.done.jsonl" | tr -d ' ')" "$((before_done + 40))"
+for id in "${race_ids[@]}"; do
+  eq "$(jq -r --arg id "$id" '.entries[] | select(.id == $id) | .status' "$f")" settled
+done
+eq "$("$B" consume-answers demo | head -1)" "settled 0, refused 1"
+[[ ! -e "$adir/answers.jsonl" ]] || { echo "FAIL: the concurrent line should now be claimed" >&2; exit 1; }
 
 jq '.entries += [range(205) | {id: "T-\(100 + .)", kind: "task", title: "x", status: "done", review: "auto", depends_on: [], attempts: [], created: "2020-01-01T00:00:00Z", updated: "2021-01-01T00:\(10 + (. / 60 | floor)):\(10 + (. % 60))Z"}]' "$f" > "$T/big.json"
 mv "$T/big.json" "$f"

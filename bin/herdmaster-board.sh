@@ -6,8 +6,13 @@
 #        herdmaster-board.sh set-review <task id> [--summary S] [--diff D] [--tests T] [--preview URL] [--screenshot PATH]... [--link "label|url"]...
 #        herdmaster-board.sh set-options <id> --option "A|text" [--option "B|text"] [--recommend-key K]
 #        herdmaster-board.sh status <id> <state> [answer]     (answer only when settling a decision)
-#        herdmaster-board.sh settle <id> --answer <key> [--answer-text TEXT]
-#          (open decision; answer = that option's text, which must equal TEXT if given and not start with merge/deploy/push)
+#        herdmaster-board.sh settle <id> --answer <key> [--answer-text TEXT] [--answer-at TIMESTAMP]
+#          (open decision; answer = that option's text, which must equal TEXT if given, must not contain
+#           merge/deploy/push as a UX-only best-effort check (never a security boundary; see below), and
+#           if --answer-at is given, the decision's own 'updated' must not be newer than TIMESTAMP)
+#        herdmaster-board.sh consume-answers <project>
+#          (atomically claims answers.jsonl, settles or refuses each line, moves all of them to
+#           answers.done.jsonl, prints a settled/refused summary; never loses a concurrently-appended line)
 #        herdmaster-board.sh attempt <id> <status> [feedback] [link]
 #        herdmaster-board.sh supersede <id>
 #        herdmaster-board.sh release-when-done <id> [true|false]
@@ -16,6 +21,8 @@
 #        herdmaster-board.sh import-legacy
 #        herdmaster-board.sh archive
 #        herdmaster-board.sh count | show
+# A settled decision or an answers.jsonl line NEVER by itself authorizes merge, deploy or push: those
+# still require the master's explicit instruction on the owner's word (see roles/orchestrator.md).
 # Project comes from $HERDMASTER_PROJECT. Single writer (the orchestrator); no lock, so concurrent writers can lose updates.
 set -euo pipefail
 
@@ -221,13 +228,14 @@ cmd_status() {
 }
 
 cmd_settle() {
-  local id=${1:-} key="" text="" has_text=""
+  local id=${1:-} key="" text="" has_text="" at="" has_at=""
   [[ -n $id ]] || die "settle: <id> --answer <key> required"
   shift
   while (($#)); do
     case $1 in
       --answer) key=${2:-}; shift 2 ;;
       --answer-text) text=${2:-}; has_text=1; shift 2 ;;
+      --answer-at) at=${2:-}; has_at=1; shift 2 ;;
       *) die "settle: unknown argument $1" ;;
     esac
   done
@@ -239,16 +247,74 @@ cmd_settle() {
     || die "settle: $id is not open"
   load | jq -e --arg id "$id" --arg k "$key" 'any(.entries[]; .id == $id and any(.options[]?; .key == $k))' >/dev/null \
     || die "settle: '$key' is not an option of $id"
+  # Assumes ids are unique (they come from a max+1 counter); first() picks the first match, as viewer.py does.
   local cur; cur=$(load | jq -c --arg id "$id" --arg k "$key" 'first(.entries[] | select(.id == $id) | .options[] | select(.key == $k)) | .text')
   [[ -z $has_text ]] || jq -e --argjson c "$cur" --arg t "$text" '$c == $t' <<<null >/dev/null \
     || die "settle: option $key of $id changed since the answer was recorded"
-  jq -e --argjson c "$cur" '$c | sub("^[\\s\\p{Cc}\\p{Cf}]+"; "") | ascii_downcase | test("^(merge|deploy|push)") | not' <<<null >/dev/null \
+  if [[ -n $has_at ]]; then
+    local updated; updated=$(load | jq -r --arg id "$id" 'first(.entries[] | select(.id == $id)) | .updated')
+    jq -e -n --arg u "$updated" --arg a "$at" '($u | fromdateiso8601) <= ($a | fromdateiso8601)' >/dev/null \
+      || die "settle: $id changed after the answer was recorded"
+  fi
+  # UX-only best-effort check, never a security boundary (see the block comment near the top of this file
+  # and roles/orchestrator.md): NFKC-normalize is not available in jq, so this is a coarser pass than the
+  # Python/JS uxReleaseWord -- same word list, casefold and strip-then-search-anywhere approach, applied
+  # to what jq's regex engine can reach (Cc/Cf/Zs/Zl/Zp/Mn categories plus the specific filler codepoints
+  # U+3164, U+FFA0, U+2800). Keep the word list in sync if it ever changes.
+  jq -e --argjson c "$cur" '
+    ($c | gsub("[\\s\\p{Cc}\\p{Cf}\\p{Zs}\\p{Zl}\\p{Zp}\\p{Mn}ㅤﾠ⠀]"; "") | ascii_downcase) as $n
+    | ["merge", "deploy", "push"] | any(. as $w | $n | contains($w)) | not' <<<null >/dev/null \
     || die "settle: merge, deploy and push are answered in chat, not settled from an option"
   save "$(load | jq --arg id "$id" --argjson a "$cur" --arg ts "$(now)" '
     .entries |= map(if .id == $id then
       .status = "settled" | .answer = $a | .updated = $ts
       | if has("note") then .note += "\nAnswer: " + $a else . end
       else . end)')"
+}
+
+# Consumes the current answers.jsonl for a project, settling each line via cmd_settle (jq-driven, values
+# always passed through --arg/--argjson, never interpolated into a shell string that gets re-parsed).
+# Renames answers.jsonl to a timestamped .processing file first so a concurrent POST /answer appends to a
+# fresh answers.jsonl instead, and every line -- settled or refused -- moves to answers.done.jsonl, so a
+# line skipped because its decision wasn't open is never reconsidered from a live file (see fix 7 above:
+# settle's --answer-at guards against a decision that was reopened and changed after the answer was sent).
+cmd_consume_answers() {
+  local project=${1:-}
+  [[ -n $project ]] || die "consume-answers: <project> required"
+  [[ $project == "$HERDMASTER_PROJECT" ]] || die "consume-answers: <project> must match \$HERDMASTER_PROJECT"
+  local live="$DIR/answers.jsonl" done_file="$DIR/answers.done.jsonl"
+  [[ -f $live ]] || { echo "settled 0, refused 0"; return 0; }
+  local claim="$DIR/answers.$(date -u +%Y%m%dT%H%M%S).$$.$RANDOM.processing"
+  mv "$live" "$claim"
+  local settled=0 refused=0 reasons=()
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ -n $line ]] || continue
+    local lproj lid lkey ltext lat result reason=""
+    lproj=$(jq -r '.project // empty' <<<"$line" 2>/dev/null) || lproj=""
+    lid=$(jq -r '.id // empty' <<<"$line" 2>/dev/null) || lid=""
+    lkey=$(jq -r '.key // empty' <<<"$line" 2>/dev/null) || lkey=""
+    ltext=$(jq -r '.text // empty' <<<"$line" 2>/dev/null) || ltext=""
+    lat=$(jq -r '.at // empty' <<<"$line" 2>/dev/null) || lat=""
+    if [[ -z $lproj || -z $lid || -z $lkey || $lproj != "$project" ]]; then
+      reason="malformed line or wrong project"; result=refused
+    else
+      local args=(settle "$lid" --answer "$lkey")
+      [[ -z $ltext ]] || args+=(--answer-text "$ltext")
+      [[ -z $lat ]] || args+=(--answer-at "$lat")
+      local out
+      if out=$(HERDMASTER_PROJECT="$project" "$0" "${args[@]}" 2>&1); then
+        result=settled
+      else
+        reason=$out; result=refused
+      fi
+    fi
+    if [[ $result == settled ]]; then settled=$((settled + 1)); else refused=$((refused + 1)); reasons+=("$lid: $reason"); fi
+    jq -c --arg r "$result" --arg why "$reason" '. + {result: $r} + (if $why != "" then {reason: $why} else {} end)' <<<"$line" >> "$done_file"
+  done < "$claim"
+  chmod 600 "$done_file" 2>/dev/null || true
+  rm -f "$claim"
+  echo "settled $settled, refused $refused"
+  ((refused == 0)) || printf 'refused: %s\n' "${reasons[@]}"
 }
 
 cmd_attempt() {
@@ -456,6 +522,7 @@ case $sub in
   set-group) cmd_set_group "$@" ;;
   status) cmd_status "$@" ;;
   settle) cmd_settle "$@" ;;
+  consume-answers) cmd_consume_answers "$@" ;;
   attempt) cmd_attempt "$@" ;;
   supersede) cmd_supersede "$@" ;;
   release-when-done) cmd_release_when_done "$@" ;;

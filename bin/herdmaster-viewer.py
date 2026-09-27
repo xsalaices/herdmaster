@@ -289,6 +289,12 @@ def focused_project(root, workspace):
     return None
 
 
+def host_allowed(handler):
+    """DNS-rebinding guard: accept only the loopback names on the port this server is bound to."""
+    port = handler.server.server_address[1]
+    return handler.headers.get("Host") in ("127.0.0.1:%d" % port, "localhost:%d" % port, "[::1]:%d" % port)
+
+
 def make_handler(fixed, root):
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code, body, ctype):
@@ -313,6 +319,11 @@ def make_handler(fixed, root):
             return name
 
         def do_GET(self):
+            if not host_allowed(self):
+                self.send_response(403)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             u = urlsplit(self.path)
             route = u.path
             if route in ("/", "/index.html"):

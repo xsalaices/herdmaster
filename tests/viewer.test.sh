@@ -24,6 +24,25 @@ curl -s "http://127.0.0.1:$PORT/" | grep -q 'Herdmaster board' || fail "page"
 [[ $(curl -s "http://127.0.0.1:$PORT/tasks.json" | jq -r '.entries[0].id') == T-001 ]] || fail "json"
 [[ $(code -X POST "http://127.0.0.1:$PORT/tasks.json") == 405 ]] || fail "POST should be 405"
 [[ $(code -X DELETE "http://127.0.0.1:$PORT/") == 405 ]] || fail "DELETE should be 405"
+hget() { curl -s -H "Host: $1" -w '|%{http_code}' "$2"; }
+for h in "127.0.0.1:$PORT" "localhost:$PORT"; do
+  for r in / /tasks.json /projects.json; do
+    [[ $(code -H "Host: $h" "http://127.0.0.1:$PORT$r") == 200 ]] || fail "Host $h $r should be 200"
+  done
+done
+RAW=$(python3 -c 'import socket,sys;s=socket.create_connection(("127.0.0.1",int(sys.argv[1])));s.sendall(b"GET /tasks.json HTTP/1.0\r\n\r\n");d=b""
+while True:
+    c=s.recv(4096)
+    if not c: break
+    d+=c
+print(d.decode().replace("\r\n","|"))' "$PORT")
+[[ $RAW == 'HTTP/1.0 403 Forbidden|Server:'*'|Content-Length: 0||' ]] || fail "missing Host should be 403 empty: $RAW"
+for h in evil.example 127.0.0.1 127.0.0.1:1 "evil.example:$PORT" ""; do
+  for r in / /tasks.json /projects.json; do
+    out=$(hget "$h" "http://127.0.0.1:$PORT$r")
+    [[ $out == '|403' ]] || fail "Host '$h' $r should be 403 with empty body, got: $out"
+  done
+done
 O="$T/.claude/orchestrator"
 mkdir -p "$O/alpha" "$O/beta" "$O/empty"
 echo '{"entries":[{"id":"D-001","kind":"decision","status":"open","title":"a"}]}' > "$O/alpha/tasks.json"

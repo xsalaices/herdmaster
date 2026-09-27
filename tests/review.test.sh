@@ -8,7 +8,7 @@ D=$(mktemp -d "$ROOT/hm-file-test.XXXXXX")
 PID=""
 FILES=(shot.png UPPER.PNG note.txt big.png run.exe data.json sneaky.png dirlink)
 cleanup() {
-  [[ -n $PID ]] && { kill "$PID" 2>/dev/null; wait "$PID" 2>/dev/null; }
+  [[ -n $PID ]] && { kill "$PID" 2>/dev/null; wait "$PID" 2>/dev/null || true; }
   for f in "${FILES[@]}"; do rm -f -- "$D/$f"; done
   rmdir "$D/sub" 2>/dev/null || true
   rmdir "$D" 2>/dev/null || true

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Writes board summaries into herdr display metadata.
-# Usage: herdmaster-labels.sh [--dry-run] workspace <workspace-id>   token "project" = project name, "decisions" = open decision count
+# Usage: herdmaster-labels.sh [--dry-run] workspace <workspace-id>   token "project" = project name, "decisions" = open decision count,
+#                                                                     "ready" = tickets with every decision settled (at least one, none open)
 #        herdmaster-labels.sh [--dry-run] pane <pane-id> <task-id>   pane title "<handle> <task title> · <status>", handle T-003 -> T3
 #        herdmaster-labels.sh [--dry-run] clear <pane-id>            removes the pane title
 # Project comes from $HERDMASTER_PROJECT. --dry-run prints the herdr commands instead of running them.
@@ -29,8 +30,21 @@ case $sub in
     # matching the task pattern is a decision (a ticket can be assigned the letter "T" itself, so matching
     # decisions directly by a leading letter would be wrong here).
     n=$("$BOARD" show | awk -F'\t' '$1 !~ /^T-[0-9]+$/ && $2 == "open"' | wc -l | tr -d ' ')
+    # Ready-to-hand-off ticket count: reads tasks.json directly (same file herdmaster-notify.sh polls) since
+    # readiness needs per-ticket grouping that "board show" doesn't carry for ungrouped (Other) decisions.
+    # Keep this jq filter in sync with the one in herdmaster-notify.sh.
+    board_file="$HOME/.claude/orchestrator/$HERDMASTER_PROJECT/tasks.json"
+    ready=0
+    if [[ -f $board_file ]]; then
+      ready=$(jq -r '
+        [.entries[] | select(.kind == "decision" and (.status == "open" or .status == "settled"))] as $ds
+        | ($ds | group_by(.group // "Other")
+            | map({open: ([.[] | select(.status == "open")] | length)}))
+        | map(select(.open == 0)) | length
+      ' "$board_file" 2>/dev/null) || ready=0
+    fi
     run "$HERDR" workspace report-metadata --source "$SOURCE" --ttl-ms "$TTL_MS" \
-      --token "project=$HERDMASTER_PROJECT" --token "decisions=$n" "$ws"
+      --token "project=$HERDMASTER_PROJECT" --token "decisions=$n" --token "ready=$ready" "$ws"
     ;;
   pane)
     pane=${1:-} id=${2:-}

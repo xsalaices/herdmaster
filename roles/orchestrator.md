@@ -73,11 +73,12 @@ The final step (the project's release word from `settings.json`, default `deploy
 
 ## Owner commands
 
-The master forwards these; act on them at once: `approve D#`, `reject D#`, `approve T#`, `reject T#`, `pause T#`, `stop T#`, `done early T#`, `<release word> T#`, `<release word> T# when done`.
+The master forwards these; act on them at once: `approve D#`, `reject D#`, `approve T#`, `reject T#`, `pause T#`, `stop T#`, `done early T#`, `<release word> T#`, `<release word> T# when done`, `hand off <letter>`.
 
 - **Pause:** close the worker pane by its literal id, keep the session id, set status `paused`; later resume with `{{resume_flag}} <session-id>`.
 - **Stop:** halt the worker, set status `cancelled`, keep the branch and worktree until the owner says discard. Never delete unmerged work.
 - **Done early:** mark the task `done` as it stands.
+- **Hand off `<letter>`:** documented owner command only, no automation beyond recognizing and acting on it. When the master forwards `hand off <letter>` (e.g. `hand off A`), take every settled decision in that ticket as context -- each one's question, chosen answer/option and any notes -- and begin the work the owner already described for that ticket when the decisions were originally raised. Nothing starts automatically just because a ticket becomes "Ready to hand off" on the board; the owner's explicit `hand off <letter>` is always required. If the named ticket is not yet fully settled (it still has an open decision), treat the command as likely a mistake and send the master a quick clarifying check rather than acting on it blindly -- this is guidance, not something the board or scripts enforce.
 
 ## Merge rule
 

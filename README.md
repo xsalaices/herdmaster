@@ -92,7 +92,7 @@ The install step is required: the `/herdmaster` and `/orchestrator` skills, suba
 
 Then in Claude Code, inside your project's repo: `/herdmaster`. It starts (or finds) the orchestrator. See [docs/install.md](docs/install.md).
 
-Requirements: macOS, [herdr](https://herdr.dev), Claude Code, `jq`, `python3`.
+Requirements: macOS, [herdr](https://herdr.dev), Claude Code, `jq`, `python3`, `flock` (`brew install flock`).
 
 ## herdr patterns used
 

@@ -58,19 +58,40 @@ has "$out" "pane split"
 out=$(HERDMASTER_WORKER_LAYOUT=main HERDMASTER_MAX_PANES=2 FAKE_MAIN_PANES=4 "$L" --dry-run new-worker build echo hi 2>&1)
 has "$out" "tab create"
 
-out=$("$L" --dry-run new-orchestrator claude hi 2>&1)
+out=$("$L" --dry-run new-orchestrator --classic claude hi 2>&1)
 has "$out" "pane split --current --direction right --no-focus"
 has "$out" "pane rename <new-pane> orchestrator"
 has "$out" "HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=planner-1 claude hi"
+lacks "$out" "herdmaster-sidebar.sh"
 
-out=$("$L" --dry-run new-orchestrator --cwd /tmp/work claude hi 2>&1)
+out=$("$L" --dry-run new-orchestrator --classic --cwd /tmp/work claude hi 2>&1)
 has "$out" "cd /tmp/work && HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=planner-1 claude hi"
 
-out=$("$L" --dry-run new-orchestrator --cwd /tmp/work --tier default '/orchestrator demo' 2>&1)
+out=$("$L" --dry-run new-orchestrator --classic --cwd /tmp/work --tier default '/orchestrator demo' 2>&1)
 has "$out" 'cd /tmp/work && HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=planner-1 env -u ANTHROPIC_API_KEY claude'
 has "$out" '/orchestrator\ demo'
 
-has "$("$L" --dry-run new-orchestrator claude hi 2>&1)" "settings set herdr_workspace ws-1"
+has "$("$L" --dry-run new-orchestrator --classic claude hi 2>&1)" "settings set herdr_workspace ws-1"
+
+# Default (no --classic): sidebar is a plain pane (no HERDMASTER_ROLE/MASTER) split into tab 1's
+# right half -- the exact slot --classic gives the orchestrator -- and the orchestrator lands in
+# the workers tab via the same grid logic as new-worker, labeled orchestrator.
+export FAKE_TABS='[{"tab_id":"tab-2","workspace_id":"ws-1","label":"workers","pane_count":3}]'
+out=$("$L" --dry-run new-orchestrator claude hi 2>&1)
+has "$out" "pane split --current --direction right --no-focus"
+has "$out" "pane rename <new-pane> sidebar"
+sidebar_line=$(grep -F "pane run <new-pane> HERDMASTER_PROJECT=" <<<"$out")
+has "$sidebar_line" "herdmaster-sidebar.sh"
+lacks "$sidebar_line" "HERDMASTER_ROLE"
+has "$out" "pane split pane-a --direction right --no-focus"
+has "$out" "pane rename <new-pane> orchestrator"
+has "$out" "HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=planner-1 claude hi"
+has "$out" "settings set herdr_workspace ws-1"
+
+out=$("$L" --dry-run new-orchestrator --cwd /tmp/work claude hi 2>&1)
+has "$out" "pane rename <new-pane> sidebar"
+has "$out" "cd /tmp/work && HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=planner-1 claude hi"
+export FAKE_TABS='[{"tab_id":"tab-1","workspace_id":"ws-1","label":"1","pane_count":2}]'
 [[ ! -f $T/.claude/orchestrator/demo/settings.json ]] || { echo "FAIL: dry-run wrote settings" >&2; exit 1; }
 cp "$T/herdr" "$T/herdr-real"
 cat > "$T/herdr" <<'FAKE2'
@@ -81,12 +102,12 @@ case "$1 $2" in
   *) exec "$(dirname "$0")/herdr-real" "$@" ;;
 esac
 FAKE2
-"$L" new-orchestrator claude hi >/dev/null 2>&1
+"$L" new-orchestrator --classic claude hi >/dev/null 2>&1
 [[ $(jq -r .herdr_workspace "$T/.claude/orchestrator/demo/settings.json") == ws-1 ]] || { echo "FAIL: workspace not recorded" >&2; exit 1; }
 rm -f -- "$T/.claude/orchestrator/demo/settings.json"
 mv "$T/herdr-real" "$T/herdr"
 
-out=$("$L" --dry-run new-orchestrator claude "/orchestrator my proj" "it's a \"brief\"" 2>&1)
+out=$("$L" --dry-run new-orchestrator --classic claude "/orchestrator my proj" "it's a \"brief\"" 2>&1)
 line=$(grep -F "pane run" <<<"$out")
 eval "argv=(${line#*HERDMASTER_MASTER=planner-1 })"
 [[ ${#argv[@]} -eq 3 && ${argv[1]} == "/orchestrator my proj" && ${argv[2]} == "it's a \"brief\"" ]] || { echo "FAIL: quoting: $line" >&2; exit 1; }

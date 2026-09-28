@@ -16,8 +16,20 @@ out=$("$L" --dry-run workspace ws-1)
 has "$out" "workspace report-metadata"
 has "$out" "--token project=demo"
 has "$out" "--token decisions=2"
+has "$out" "--token ready=0"
 "$B" status A1 settled
-has "$("$L" --dry-run workspace ws-1)" "--token decisions=1"
+out=$("$L" --dry-run workspace ws-1)
+has "$out" "--token decisions=1"
+has "$out" "--token ready=0"
+"$B" status A2 settled
+has "$("$L" --dry-run workspace ws-1)" "--token ready=1"
+
+# A ticket that currently has zero decisions (every one of them moved to another ticket via set-group) never
+# counts as ready, even though its letter is still reserved forever in the board's 'tickets' map.
+HERDMASTER_PROJECT=tix2 "$B" add decision "Only one" --group Empty >/dev/null
+HERDMASTER_PROJECT=tix2 "$B" set-group A1 Elsewhere >/dev/null
+HERDMASTER_PROJECT=tix2 "$B" status B1 settled >/dev/null
+has "$(HERDMASTER_PROJECT=tix2 "$L" --dry-run workspace ws-2)" "--token ready=1"
 
 out=$("$L" --dry-run pane pane-1 T-001)
 has "$out" "T1"

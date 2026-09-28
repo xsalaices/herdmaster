@@ -310,7 +310,7 @@ function chev(){return $("span","chev")}
 function question(e){
   const key=cur+"\n"+e.id,open=openQ.has(key),[sum,done]=summary(e);
   const q=$("div","q"+(done?" done":"")),b=$("button");b.type="button";b.setAttribute("aria-expanded",open);
-  const t=$("span","qt");t.append($("span","",e.title||"(untitled)"));if(sum)t.append($("span","sum",sum));
+  const t=$("span","qt");t.append($("span","",e.title||"(untitled)"));if(sum&&!(open&&!done))t.append($("span","sum",sum));
   b.append(chev(),$("span","tag",short(e.id)),t);
   b.onclick=()=>{if(openQ.has(key))openQ.delete(key);else openQ.add(key);last="";paint()};
   q.append(b);

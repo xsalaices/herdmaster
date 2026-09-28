@@ -155,6 +155,12 @@ for _ in $(seq 50); do curl -s "http://127.0.0.1:$PORT3/" >/dev/null 2>&1 && bre
 [[ $(code -X POST "$F") == 405 ]] || fail "focus POST should be 405"
 kill "$PID3"; wait "$PID3" 2>/dev/null || true
 grep -q 'Follow herdr' <<<"$page" || fail "follow toggle"
+# Decision ids are already short (A1, B12, ...) and render as-is; only task ids get the T-014 -> T14
+# dash/zero-padding strip, applied via one dispId() helper everywhere an id badge is shown.
+grep -q 'const dispId=e=>e.kind==="decision"?(e.id||""):short(e.id)' <<<"$page" || fail "decision ids render as-is, task ids keep short()"
+grep -q '\$("span","tag",dispId(e))' <<<"$page" || fail "row/question tag must use dispId, not short(e.id)"
+grep -qE 'span..tag.,short\(e\.id\)' <<<"$page" && fail "a row/question tag still strips decision ids via short()"
+grep -q 'x.append(\$("b","",id))' <<<"$page" || fail "waiting-on badge shows the decision id as-is"
 kill "$PID2"; wait "$PID2" 2>/dev/null || true; PID2=""
 python3 "$V" --project ../x --port "$PORT2" >"$T/bad" 2>&1 && fail "traversal --project should exit non-zero"
 grep -q "invalid project name" "$T/bad" || fail "bad --project message"

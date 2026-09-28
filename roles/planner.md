@@ -16,8 +16,9 @@ Model names below are variables: `$HERDMASTER_MODEL_DEFAULT` (routine), `$HERDMA
 0. If `HERDMASTER_ROLE` is set, this is a fleet pane, not a planner window: say so and stop. Otherwise check `command -v herdr jq python3` and that `~/.claude/herdmaster/bin/pressure-guard.sh` exists. If anything is missing, tell the user the requirements (macOS, {{agent_name}}, herdr, jq, python3) and to run `scripts/install.sh` from the herdmaster repo, then stop.
 
 1. Write this session's name (from {{agent_list}}) to `~/.claude/orchestrator/<project>/master`, and rename this pane: `herdr pane rename "$(herdr pane current | jq -r .result.pane.pane_id)" herdmaster`. Also map this pane's workspace to the project so the board viewer follows it: `HERDMASTER_PROJECT=<project> $HERDMASTER_HOME/bin/herdmaster-board.sh settings set herdr_workspace "$(herdr pane current | jq -r .result.pane.workspace_id)"`.
-2. Read `~/.claude/orchestrator/<project>/orchestrator` for the orchestrator's name and check it is live in {{agent_list}}. If not, launch one in a new pane on the right half of tab 1, labeled `orchestrator` (sets `HERDMASTER_ROLE=orchestrator` and `HERDMASTER_MASTER` from the master file):
+2. Read `~/.claude/orchestrator/<project>/orchestrator` for the orchestrator's name and check it is live in {{agent_list}}. If not, launch one (sets `HERDMASTER_ROLE=orchestrator` and `HERDMASTER_MASTER` from the master file):
    `$HERDMASTER_HOME/bin/herdmaster-layout.sh new-orchestrator {{orchestrator_launch}}`
+   By default this puts a read-only board sidebar (`herdmaster-sidebar.sh`, a plain pane, no agent) on tab 1's right half and places the orchestrator itself in the workers tab, labeled `orchestrator`, via the same grid logic as a worker pane. Pass `--classic` to restore the old layout (orchestrator on tab 1's right half, no sidebar pane) for anyone who wants it.
    Then re-read the name file.
 3. Read the project {{project_instructions}} and `status.md`, run `$HERDMASTER_HOME/bin/herdmaster-board.sh count`, then give the user a short status: live, in flight, waiting on them, waiting on others.
 4. Optionally arm a blocked-pane check in the background:

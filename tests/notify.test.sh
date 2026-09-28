@@ -12,7 +12,7 @@ printf '%s\n' "${@: -2:1}|${@: -1}" >> "$OSA_LOG"
 SH
 cat > "$T/lbl" <<'SH'
 #!/usr/bin/env bash
-echo "$HERDMASTER_PROJECT $*|$("$B_BIN" show 2>/dev/null | awk -F'\t' '$1 ~ /^D-/ && $2 == "open"' | wc -l | tr -d ' ')" >> "$LBL_LOG"
+echo "$HERDMASTER_PROJECT $*|$("$B_BIN" show 2>/dev/null | awk -F'\t' '$1 !~ /^T-[0-9]+$/ && $2 == "open"' | wc -l | tr -d ' ')" >> "$LBL_LOG"
 SH
 chmod +x "$T/osa" "$T/lbl"
 export B_BIN="$B" OSA_LOG="$LOG" LBL_LOG="$LBL" OSASCRIPT_BIN="$T/osa" LABELS_BIN="$T/lbl"
@@ -30,7 +30,7 @@ sleep 1
 "$B" add decision 'Pick "a" db; $(x) \ ok' >/dev/null
 pass
 eq "$(lines "$LOG")" 1 "new decision notifies once"
-grep -qF 'herdmaster: demo|D-002: Pick "a" db; $(x) \ ok' "$LOG" || { echo "FAIL: text not passed verbatim" >&2; exit 1; }
+grep -qF 'herdmaster: demo|A2: Pick "a" db; $(x) \ ok' "$LOG" || { echo "FAIL: text not passed verbatim" >&2; exit 1; }
 pass
 eq "$(lines "$LOG")" 1 "second pass silent"
 
@@ -43,9 +43,9 @@ eq "$(lines "$LOG")" 2 "no repeat"
 
 sleep 1
 "$B" add decision 'Will settle' >/dev/null
-"$B" status D-004 settled
+"$B" status A4 settled
 "$B" add decision 'Will supersede' >/dev/null
-"$B" supersede D-005
+"$B" supersede A5
 pass
 eq "$(lines "$LOG")" 2 "settled and superseded ignored"
 

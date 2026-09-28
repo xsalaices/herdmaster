@@ -10,7 +10,7 @@ eq() { [[ $1 == "$2" ]] || { echo "FAIL: got '$1' want '$2'" >&2; exit 1; }; }
 d=$("$B" add decision "Sidebar or top nav")
 t1=$("$B" add task "Settings page" --review user --depends "$d")
 t2=$("$B" add task "Docs")
-eq "$d $t1 $t2" "D-001 T-001 T-002"
+eq "$d $t1 $t2" "A1 T-001 T-002"
 eq "$(jq -r '.schema_version' "$f")" 1
 eq "$(jq -r --arg i "$t1" '.entries[] | select(.id == $i) | .depends_on[0]' "$f")" "$d"
 "$B" add task x --depends D-999 2>/dev/null && { echo "FAIL: unknown dep accepted" >&2; exit 1; }
@@ -20,8 +20,8 @@ eq "$(jq -r --arg i "$t1" '.entries[] | select(.id == $i) | .depends_on[0]' "$f"
 eq "$(jq -r '.entries[] | select(.id == "T-001") | .attempts[0].feedback' "$f")" "Spacing too tight"
 
 "$B" supersede "$d"
-eq "$(jq -r '.entries[] | select(.id == "D-001") | .status' "$f")" superseded
-eq "$(jq -r '.entries[] | select(.id == "T-001") | .flags[0]' "$f")" "superseded:D-001"
+eq "$(jq -r --arg d "$d" '.entries[] | select(.id == $d) | .status' "$f")" superseded
+eq "$(jq -r '.entries[] | select(.id == "T-001") | .flags[0]' "$f")" "superseded:$d"
 eq "$(jq -r '.entries[] | select(.id == "T-002") | .flags // "none"' "$f")" none
 
 n=$("$B" add decision "Pick one" --note "Because X" --recommend "Yes, because Y")
@@ -50,10 +50,15 @@ eq "$("$B" show | grep -A2 "^$o")" "$(printf '%s\topen\tuser\tPick layout\n    A
 g1=$("$B" add decision "Pick colors" --group "  Theme  " --option "A|Warm" --option "B|Cool")
 eq "$(jq -r --arg g "$g1" '.entries[] | select(.id == $g) | .group' "$f")" Theme
 eq "$(jq -r --arg n "$n" '.entries[] | select(.id == $n) | .group // "none"' "$f")" none
-"$B" set-group "$n" "Layout"
-eq "$(jq -r --arg n "$n" '.entries[] | select(.id == $n) | .group' "$f")" Layout
-eq "$("$B" show | grep "^$n" | awk -F'\t' '{print $NF}')" "ticket: Layout"
+# Moving a decision to a different ticket renumbers its id into the new ticket's sequence (the id always
+# starts with its ticket's letter), so set-group prints the new id and every old reference is stale.
+n2=$("$B" set-group "$n" "Layout")
+[[ $n2 != "$n" ]] || { echo "FAIL: set-group did not rename id across tickets" >&2; exit 1; }
+eq "$(jq -r --arg n "$n2" '.entries[] | select(.id == $n) | .group' "$f")" Layout
+eq "$(jq -r --arg n "$n" '[.entries[] | select(.id == $n)] | length' "$f")" 0
+eq "$("$B" show | grep "^$n2" | awk -F'\t' '{print $NF}')" "ticket: Layout"
 eq "$("$B" show | grep -c 'ticket:')" 2
+n=$n2
 for bad in "--group ''" "--group '   '" "--group $(printf 'x%.0s' $(seq 61))"; do
   eval "\"\$B\" add decision Bad $bad" 2>/dev/null && { echo "FAIL: accepted group '$bad'" >&2; exit 1; }
 done
@@ -305,4 +310,33 @@ eq "$("$B" archive)" "archived 7"
 eq "$(jq '[.entries[] | select(.status == "done" or .status == "cancelled")] | length' "$f")" 200
 eq "$(jq '.entries | length' "$T/.claude/orchestrator/demo/tasks-archive.json")" 7
 eq "$("$B" archive)" ""
+
+# --- Ticket-letter decision ids: sequential per-ticket numbering, isolated in a fresh project so the
+# letter/number assignments below are exact and don't depend on the giant scenario above. ---
+tf="$T/.claude/orchestrator/tix/tasks.json"
+tx1=$(HERDMASTER_PROJECT=tix "$B" add decision "Q1" --group Nav)
+tx2=$(HERDMASTER_PROJECT=tix "$B" add decision "Q2" --group Nav)
+tx3=$(HERDMASTER_PROJECT=tix "$B" add decision "Q3" --group Perf)
+eq "$tx1 $tx2 $tx3" "A1 A2 B1"
+eq "$(jq -c '.tickets' "$tf")" '{"Nav":"A","Perf":"B"}'
+# A decision with no --group goes under a ticket literally named "Other", with its own sequence.
+tx4=$(HERDMASTER_PROJECT=tix "$B" add decision "Q4")
+tx5=$(HERDMASTER_PROJECT=tix "$B" add decision "Q5")
+eq "$tx4 $tx5" "C1 C2"
+eq "$(jq -r --arg i "$tx4" '.entries[] | select(.id == $i) | .group // "none"' "$tf")" none
+eq "$(jq -c '.tickets' "$tf")" '{"Nav":"A","Perf":"B","Other":"C"}'
+# Adding a fourth question to an existing ticket continues that ticket's own sequence.
+tx6=$(HERDMASTER_PROJECT=tix "$B" add decision "Q6" --group Nav)
+eq "$tx6" "A3"
+# set-group across tickets renumbers into the target ticket's sequence and rewrites every reference.
+HERDMASTER_PROJECT=tix "$B" add task "Depends on Q3" --depends "$tx3" >/dev/null
+HERDMASTER_PROJECT=tix "$B" supersede "$tx4"
+tx3b=$(HERDMASTER_PROJECT=tix "$B" set-group "$tx3" Nav)
+eq "$tx3b" "A4"
+eq "$(jq -r --arg i "$tx3b" '.entries[] | select(.kind == "task") | .depends_on[0]' "$tf")" "$tx3b"
+eq "$(jq -c '[.entries[] | select(.id == "'"$tx3"'")]' "$tf")" '[]'
+# Moving a decision back to the ticket it is already in is a no-op (same id, no spurious renumber).
+tx6b=$(HERDMASTER_PROJECT=tix "$B" set-group "$tx6" Nav)
+eq "$tx6b" "$tx6"
+
 echo "ok"

@@ -34,9 +34,12 @@ cp "$D/design-queue.md" "$T/dq.bak"; cp "$D/decisions.md" "$T/dc.bak"
 out=$("$B" import-legacy)
 eq "$out" "imported open 1, imported settled 2, skipped 1"
 eq "$(jq -r '.schema_version' "$f")" 1
-eq "$(jq -r '.entries[] | select(.title == "Pick a colour scheme") | .id + "|" + .status + "|" + (.blocking | tostring) + "|" + .recommend' "$f")" "D-002|open|true|Cool tones"
+# Legacy-imported decisions keep the old D-001 counter (import-legacy is unchanged, out of scope for the
+# ticket-letter scheme); "Name the export button" was added first via 'add decision' but that now gets a
+# ticket-letter id (A1), not a D- id, so the D- counter here starts fresh at D-001.
+eq "$(jq -r '.entries[] | select(.title == "Pick a colour scheme") | .id + "|" + .status + "|" + (.blocking | tostring) + "|" + .recommend' "$f")" "D-001|open|true|Cool tones"
 eq "$(jq -r '.entries[] | select(.title == "Pick a colour scheme") | .note' "$f")" "Which palette should the app use? Marketing wants a fresh look."
-eq "$(jq -r '.entries[] | select(.title == "Use weekly releases") | .id + "|" + .status' "$f")" "D-003|settled"
+eq "$(jq -r '.entries[] | select(.title == "Use weekly releases") | .id + "|" + .status' "$f")" "D-002|settled"
 eq "$(jq -r '.entries[] | select(.title == "Skip dark mode") | .status' "$f")" settled
 eq "$(jq -r '.entries[0].id' "$f")" T-001
 [[ -f $D/.legacy-imported ]] || { echo "FAIL: no marker" >&2; exit 1; }

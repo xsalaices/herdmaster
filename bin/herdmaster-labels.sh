@@ -25,7 +25,10 @@ sub=${1:-}; shift || true
 case $sub in
   workspace)
     ws=${1:-}; [[ -n $ws ]] || die "workspace: <workspace-id> required"
-    n=$("$BOARD" show | awk -F'\t' '$1 ~ /^D-/ && $2 == "open"' | wc -l | tr -d ' ')
+    # Decision ids are ticket letters + a number (never a dash); task ids are always T-XXX, so anything not
+    # matching the task pattern is a decision (a ticket can be assigned the letter "T" itself, so matching
+    # decisions directly by a leading letter would be wrong here).
+    n=$("$BOARD" show | awk -F'\t' '$1 !~ /^T-[0-9]+$/ && $2 == "open"' | wc -l | tr -d ' ')
     run "$HERDR" workspace report-metadata --source "$SOURCE" --ttl-ms "$TTL_MS" \
       --token "project=$HERDMASTER_PROJECT" --token "decisions=$n" "$ws"
     ;;

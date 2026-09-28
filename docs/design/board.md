@@ -23,7 +23,7 @@ Top level: `schema_version` and `entries[]`. Viewers ignore unknown fields.
 
 | Field | Meaning |
 |---|---|
-| `id` | `T-014` for tasks, `D-007` for decisions |
+| `id` | `T-014` for tasks; `<ticket letter><number>` for decisions, e.g. `A1`, `B23` (see Tickets and ids below) |
 | `kind` | `task` or `decision` |
 | `title` | Short label |
 | `status` | See lifecycles below |
@@ -42,6 +42,7 @@ Top level: `schema_version` and `entries[]`. Viewers ignore unknown fields.
 ```json
 {
   "schema_version": 1,
+  "tickets": { "Navigation redesign": "A", "Other": "B" },
   "entries": [
     {
       "id": "T-014",
@@ -49,7 +50,7 @@ Top level: `schema_version` and `entries[]`. Viewers ignore unknown fields.
       "title": "Add settings page",
       "status": "in review",
       "review": "user",
-      "depends_on": ["D-007"],
+      "depends_on": ["A1"],
       "attempts": [
         { "status": "rejected", "feedback": "Spacing too tight", "link": "pr/41" },
         { "status": "finished", "feedback": null, "link": "pr/43" }
@@ -58,11 +59,12 @@ Top level: `schema_version` and `entries[]`. Viewers ignore unknown fields.
       "updated": "2025-01-10T12:30:00Z"
     },
     {
-      "id": "D-007",
+      "id": "A1",
       "kind": "decision",
       "title": "Sidebar or top nav",
       "status": "settled",
       "review": "user",
+      "group": "Navigation redesign",
       "depends_on": [],
       "attempts": [],
       "created": "2025-01-09T15:00:00Z",
@@ -72,15 +74,27 @@ Top level: `schema_version` and `entries[]`. Viewers ignore unknown fields.
 }
 ```
 
-Set options with `herdmaster-board.sh add decision "Sidebar or top nav" --note "..." --recommend "why" --option "A|Sidebar" --option "B|Top nav" --recommend-key B`. `herdmaster-board.sh set-options D-007 --option "A|Sidebar" --option "B|Top nav" [--recommend-key B]` replaces the options of an existing decision; `show` prints them under the entry.
+Set options with `herdmaster-board.sh add decision "Sidebar or top nav" --note "..." --recommend "why" --option "A|Sidebar" --option "B|Top nav" --recommend-key B`. `herdmaster-board.sh set-options A1 --option "A|Sidebar" --option "B|Top nav" [--recommend-key B]` replaces the options of an existing decision; `show` prints them under the entry.
 
-Tickets: a ticket is a group of related questions, one collapsible block in the viewer's Tickets column. The stored kind stays `decision`; the UI says "ticket" for the group and "question" for each decision in it. `herdmaster-board.sh add decision "..." --group "Navigation redesign"` files a question under a ticket, `set-group <id> "<name>"` moves an existing one, and `show` prints `ticket: <name>` on the entry. Groups have no entry of their own: a ticket exists while a non-superseded question names it. Boards without `group` keep working; all their questions land under `Other`.
+## Tickets and ids
+
+A ticket is a group of related questions (decisions), one collapsible block in the viewer's Tickets column. The stored `kind` stays `decision`; the UI says "ticket" for the group and "question" for each decision in it.
+
+A ticket is identified by one or more letters, assigned the first time its name is used, in creation order: `A`, `B`, ... `Z`, then `AA`, `AB`, ... (spreadsheet-column order). The name -> letter mapping lives in the board file itself, in a top-level `tickets` object (`{"Navigation redesign": "A", "Other": "B"}`), so it is stable and inspectable rather than derived on the fly. `herdmaster-board.sh add decision "..." --group "Navigation redesign"` assigns the group its letter if it doesn't have one yet, and reuses it otherwise. A decision with no `--group` files under the ticket literally named `Other`, which gets its own letter the same way, on first use (not reserved in advance).
+
+A decision's id is `<ticket letter><number>`, e.g. `A1`, `A2`, `B1` -- the number is scoped to that ticket only and starts at 1 (ticket A's decisions are `A1`, `A2`, `A3`; ticket B's are `B1`, `B2`, independent of A's numbering). Because letters never contain digits, the letter/number split in an id is unambiguous regardless of how many tickets exist (`AA12` always parses as ticket `AA`, number 12). Task ids are a completely separate scheme (`T-014`, zero-padded, its own counter) and are never touched by any of this.
+
+`herdmaster-board.sh set-group <id> "<name>"` moves an existing decision to a different (possibly new) ticket. Since a decision's id always starts with its ticket's letter, **the id changes too** when the ticket changes -- it is renumbered into the target ticket's sequence, to stay consistent with the scheme. Every reference to the old id elsewhere on the board (`depends_on` entries, `"superseded:<id>"` flags) is rewritten to the new id in the same atomic write, and `set-group` prints the new id. Moving a decision to the ticket it is already in is a no-op (same id). `show` prints `ticket: <name>` on the entry. A ticket has no entry of its own: it exists as a row in `tickets` for as long as any decision has ever used it (letters are never reused, even if every decision that named a ticket is later superseded or moved away). Boards without `group` on a given decision keep working; that decision is treated as belonging to `Other`.
+
+### Migrating old-style ids
+
+Boards created before this scheme used sequential `D-001`-style decision ids. `herdmaster-board.sh migrate-ids <project>` does a one-time, atomic, live rename of every such id on **one** project's board to the ticket-letter scheme: it assigns tickets and numbers in old-id (creation) order using the same rule as `add decision`, then rewrites the id itself plus every reference to it -- `depends_on` arrays, `"superseded:<id>"` flags, and the `id` field of every line in that project's `answers.jsonl` and `answers.done.jsonl` -- in a single `with_lock`'d operation. It prints one `OLD -> NEW` line per renamed decision, then a summary count. It is idempotent: any id already in the new format (anything not matching `^D-[0-9]+$`) is left alone, so running it again on an already-migrated board renames nothing and is a safe no-op. `<project>` must equal `$HERDMASTER_PROJECT`, as a guardrail against migrating the wrong board. Task ids are never touched by `migrate-ids`.
 
 Review pack: `herdmaster-board.sh set-review <task id> [--summary S] [--diff D] [--tests T] [--preview URL] [--screenshot PATH]... [--link "label|url"]...` merges into the task's `review_pack`. Scalar flags replace their field (an empty value removes it); `--screenshot` and `--link` are repeatable and replace the whole list when given. URLs must be http or https, screenshot paths absolute, and only tasks take a pack. `show` prints one `review:` line under the task. The viewer renders the pack directly under the title of an `in review` task: summary, a Preview link, extra links, screenshot thumbnails that open the full image in a new tab, then diff and tests as plain text. Missing parts are left out. Any http(s) URL in a note or summary becomes a link built with DOM nodes and `textContent` (never `innerHTML`), `rel="noopener noreferrer"`, `target="_blank"`; other schemes stay plain text.
 
 The viewer serves screenshots through the read-only `GET /file?path=<absolute path>` route, which re-validates every request: the path must be absolute and contain no `..`, NUL byte or non-normalised segment (400); the realpath, with symlinks followed, must sit under `/private/tmp/claude-501` or `~/.claude/orchestrator/<project>/review/` (403); no path component below the root may start with `.` or be named `secrets`, compared NFKC and case-folded (403); the extension must be png, jpg, jpeg, gif, webp, txt, md, log, diff or patch (415); it must be a regular file, not a directory (400), opened with `O_NOFOLLOW` and at most 10 MB (413); a missing file is 404; other methods are 405. Responses carry a fixed `Content-Type` (text types are `text/plain`), `X-Content-Type-Options: nosniff` and a `default-src 'none'; sandbox` CSP; only images are `Content-Disposition: inline`, text is `attachment`. A `Sec-Fetch-Site` header other than `same-origin` or `none` is refused (403). Every route rejects a `Host` header other than `127.0.0.1:<port>` or `localhost:<port>` (DNS rebinding), every response carries `X-Content-Type-Options: nosniff`, the page carries a CSP that allows only its own inline script and style, same-origin images and fetches, and requests time out after 5 seconds of silence.
 
-The viewer header reads "N of M answered" (settled over open plus settled; superseded questions are left out). A ticket opens by default when it holds an open question and is collapsed otherwise. Each question row shows its title and the recommended answer (the recommended option, else `recommend`) and expands to the options and note; a settled question shows its `answer`, or "Settled" when none was recorded. A task whose `depends_on` names an open decision shows "waiting on D7" (the short handle of `D-007`).
+The viewer header reads "N of M answered" (settled over open plus settled; superseded questions are left out). A ticket opens by default when it holds an open question and is collapsed otherwise. Each question row shows its title and the recommended answer (the recommended option, else `recommend`) and expands to the options and note; a settled question shows its `answer`, or "Settled" when none was recorded. A task whose `depends_on` names an open decision shows "waiting on A1" (the decision's id, shown as-is -- decision ids are already short and are never stripped or renumbered for display). Task ids keep the `T-014` -> `T14` display convention (dash and zero-padding dropped) for visual consistency with the short decision ids.
 
 **Token delivery:** each start of the viewer prints a one-time URL, `http://127.0.0.1:<port>/#t=<token>` (`secrets.token_urlsafe(32)`), to stdout. The token lives only in the URL fragment, which browsers never send to the server and a rebound origin reading the response body never sees; no GET route (including `/`) ever puts the token in a response body. On load, the page's first script reads `location.hash`, moves the token into `sessionStorage`, and calls `history.replaceState` to strip the fragment from the visible URL immediately; every later `POST /answer` reads the token back out of `sessionStorage`. There is no token file; an operator who wants the URL again just restarts the viewer and reads the new one from its stdout.
 

@@ -159,6 +159,7 @@ const $=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=nul
 const STATUS={"in review":["review","In review"],"finished":["review","In review"],"working":["working","Working"],"blocked":["working","Working"],"approved":["working","Working"],"paused":["working","Paused"],"deploy-ready":["ready",null],"failed":["failed","Failed"]};
 const ORDER=["review","failed","working","ready"];
 const short=id=>(id||"").replace(/-0*/,"");
+const dispId=e=>e.kind==="decision"?(e.id||""):short(e.id);
 const openNotes=new Set();
 let clampChecks=[];
 function fitNotes(){
@@ -287,12 +288,12 @@ function addOpts(r,e){
   if(e.recommend)r.append($("div","rec",(os.length?"Why: ":"Recommended: ")+e.recommend));
 }
 function row(e,cls,label,past){
-  const r=$("div","row "+cls+(past?" past":""));r.append($("span","tag",short(e.id)),$("span","t",e.title||"(untitled)"));
+  const r=$("div","row "+cls+(past?" past":""));r.append($("span","tag",dispId(e)),$("span","t",e.title||"(untitled)"));
   if((e.flags||[]).length)r.append($("span","warn","a question changed"));
   if(label)r.append($("span","pill",label));
   if(e.status==="in review"&&!past){const rv=reviewBlock(e.review_pack);if(rv)r.append(rv)}
   const w=waiting.get(e.id);
-  if(w){const x=$("div","wait","waiting on ");w.forEach((id,i)=>{if(i)x.append(", ");x.append($("b","",short(id)))});r.append(x)}
+  if(w){const x=$("div","wait","waiting on ");w.forEach((id,i)=>{if(i)x.append(", ");x.append($("b","",id))});r.append(x)}
   if(e.note)addNote(r,e);
   addOpts(r,e);
   return r;
@@ -311,7 +312,7 @@ function question(e){
   const key=cur+"\n"+e.id,open=openQ.has(key),[sum,done]=summary(e);
   const q=$("div","q"+(done?" done":"")),b=$("button");b.type="button";b.setAttribute("aria-expanded",open);
   const t=$("span","qt");t.append($("span","",e.title||"(untitled)"));if(sum&&!(open&&!done))t.append($("span","sum",sum));
-  b.append(chev(),$("span","tag",short(e.id)),t);
+  b.append(chev(),$("span","tag",dispId(e)),t);
   b.onclick=()=>{if(openQ.has(key))openQ.delete(key);else openQ.add(key);last="";paint()};
   q.append(b);
   if(open){const body=$("div","qb");if(e.note)addNote(body,e);addOpts(body,e);q.append(body)}

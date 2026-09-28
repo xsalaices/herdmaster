@@ -1,8 +1,25 @@
 #!/usr/bin/env bash
 # Reads and writes ~/.claude/orchestrator/<project>/tasks.json (see docs/design/board.md).
+# A TICKET is a group of decisions and is assigned one or more letters (A, B, ... Z, AA, AB, ...) the first
+# time it is named, in creation order; the name -> letter mapping lives in the board's top-level 'tickets'
+# object. A decision's id is '<ticket letter><number>', the number scoped to that ticket only and starting
+# at 1. Ungrouped decisions belong to the ticket named "Other". Task ids are untouched by any of this (still
+# T-001 style, their own counter).
 # Usage: herdmaster-board.sh add <task|decision> <title> [--review auto|user] [--depends ID,ID] [--note TEXT] [--recommend TEXT]
-#          decisions also take --option "A|text" (repeatable, keys A..Z), --recommend-key K and --group "<ticket name>"
+#          decisions also take --option "A|text" (repeatable, keys A..Z), --recommend-key K and --group "<ticket name>" (default "Other")
 #        herdmaster-board.sh set-group <id> <ticket name>
+#          moves a decision to a (possibly new) ticket; since a decision's id always starts with its
+#          ticket's letter, the id CHANGES too -- it is renumbered into the target ticket's sequence. Every
+#          reference to the old id elsewhere on the board (depends_on, "superseded:<id>" flags) is rewritten
+#          to the new id in the same atomic write. Prints the new id.
+#        herdmaster-board.sh migrate-ids <project>
+#          one-time live rename of every old D-001-style decision id on <project>'s board to the new
+#          ticket-letter scheme, atomically. Renames the id everywhere it is referenced within that
+#          project's files: depends_on, "superseded:<id>" flags, answers.jsonl and answers.done.jsonl.
+#          <project> must equal $HERDMASTER_PROJECT (a guardrail against migrating the wrong board).
+#          Prints one "OLD -> NEW" line per renamed decision, then a summary count. Idempotent: an id
+#          already in the new format is left alone, so a second run against an already-migrated board is a
+#          safe no-op. Never touches task ids.
 #        herdmaster-board.sh set-review <task id> [--summary S] [--diff D] [--tests T] [--preview URL] [--screenshot PATH]... [--link "label|url"]...
 #        herdmaster-board.sh set-options <id> --option "A|text" [--option "B|text"] [--recommend-key K]
 #        herdmaster-board.sh status <id> <state> [answer]     (answer only when settling a decision)
@@ -25,6 +42,9 @@
 #        herdmaster-board.sh import-legacy
 #        herdmaster-board.sh archive
 #        herdmaster-board.sh count | show
+# FLEET RULE: migrate-ids does a live, board-wide id rename -- never run it against a real project's board
+# except the one you mean to migrate, and only once you are sure. It refuses to run unless <project>
+# matches $HERDMASTER_PROJECT.
 # A settled decision or an answers.jsonl line NEVER by itself authorizes merge, deploy or push: those
 # still require the master's explicit instruction on the owner's word (see roles/orchestrator.md).
 # Project comes from $HERDMASTER_PROJECT. Every load-modify-save cycle (any subcommand but show/count)
@@ -58,6 +78,23 @@ with_lock() {
 }
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# Shared jq function library for the ticket-letter id scheme: a ticket's letter follows spreadsheet-column
+# order (A..Z, then AA..AZ, BA.., bijective base26) assigned the first time its name is seen; a decision's
+# id is that letter plus a number scoped to the ticket (the letters/digits split is unambiguous since
+# letters never contain digits, so "AA12" always parses back to ticket "AA", number 12).
+JQLIB='
+def num_to_letters:
+  def go: if . <= 0 then "" else (((. - 1) % 26 + 65) | [.] | implode) as $c
+    | ((((. - 1) / 26) | floor) | go) + $c end;
+  go;
+def ticket_letter($g; $tickets):
+  if ($tickets | has($g)) then $tickets[$g]
+  else (($tickets | length) + 1 | num_to_letters) end;
+def next_ticket_num($letter; $entries):
+  ([$entries[] | select(.kind == "decision" and (.id | test("^" + $letter + "[0-9]+$")))
+    | (.id | sub("^" + $letter; "") | tonumber)] | (max // 0) + 1);
+'
 
 load() {
   if [[ -f $BOARD ]]; then cat "$BOARD"; else echo '{"schema_version":1,"entries":[]}'; fi
@@ -135,26 +172,49 @@ cmd_add() {
   [[ -z $opts && -z $rkey ]] || [[ $kind == decision ]] || die "add: --option only applies to decisions"
   [[ -z $rkey || -n $opts ]] || die "add: --recommend-key needs --option"
   [[ -z $has_group ]] || [[ $kind == decision ]] || die "add: --group only applies to decisions"
-  [[ -z $has_group ]] || group=$(group_name "$group" add)
+  local rgroup="Other"
+  if [[ $kind == decision ]]; then
+    [[ -z $has_group ]] || group=$(group_name "$group" add)
+    [[ -z $has_group ]] || rgroup=$group
+  fi
   local board dep_json opt_json='[]'
   [[ -z $opts ]] || opt_json=$(options_json "$opts" "$rkey")
   board=$(load)
   dep_json=$(jq -cn --arg d "$deps" '$d | split(",") | map(select(length > 0))')
   jq -e --argjson d "$dep_json" '. as $b | $d | all(. as $x | $b.entries | any(.id == $x))' <<<"$board" >/dev/null \
     || die "add: --depends names an unknown id"
+  local filter
+  if [[ $kind == task ]]; then
+    filter='
+      ([.entries[] | select(.id | startswith("T-")) | .id[2:] | tonumber] | (max // 0) + 1) as $n
+      | ("T-" + ("000" + ($n | tostring) | .[-3:])) as $id
+      | .entries += [{id: $id, kind: $kind, title: $title,
+          status: "working",
+          review: $review, depends_on: $deps, attempts: [], created: $ts, updated: $ts}
+          + (if $note != "" then {note: $note} else {} end)
+          + (if $rec != "" then {recommend: $rec} else {} end)]
+      | {board: ., id: $id}'
+  else
+    filter="$JQLIB"'
+      (.tickets // {}) as $tickets
+      | ticket_letter($rgroup; $tickets) as $letter
+      | ($tickets + {($rgroup): $letter}) as $tickets2
+      | next_ticket_num($letter; .entries) as $num
+      | ($letter + ($num | tostring)) as $id
+      | .tickets = $tickets2
+      | .entries += [{id: $id, kind: $kind, title: $title,
+          status: "open",
+          review: $review, depends_on: $deps, attempts: [], created: $ts, updated: $ts}
+          + (if $note != "" then {note: $note} else {} end)
+          + (if $rec != "" then {recommend: $rec} else {} end)
+          + (if ($opts | length) > 0 then {options: $opts} else {} end)
+          + (if $group != "" then {group: $group} else {} end)]
+      | {board: ., id: $id}'
+  fi
   local out
-  out=$(jq --arg kind "$kind" --arg title "$title" --arg review "$review" --argjson deps "$dep_json" --arg note "$note" --arg rec "$rec" --argjson opts "$opt_json" --arg group "$group" --arg ts "$(now)" '
-    (if $kind == "task" then "T" else "D" end) as $p
-    | ([.entries[] | select(.id | startswith($p + "-")) | .id[2:] | tonumber] | (max // 0) + 1) as $n
-    | ($p + "-" + ("000" + ($n | tostring) | .[-3:])) as $id
-    | .entries += [{id: $id, kind: $kind, title: $title,
-        status: (if $kind == "task" then "working" else "open" end),
-        review: $review, depends_on: $deps, attempts: [], created: $ts, updated: $ts}
-        + (if $note != "" then {note: $note} else {} end)
-        + (if $rec != "" then {recommend: $rec} else {} end)
-        + (if ($opts | length) > 0 then {options: $opts} else {} end)
-        + (if $group != "" then {group: $group} else {} end)]
-    | {board: ., id: $id}' <<<"$board")
+  out=$(jq --arg kind "$kind" --arg title "$title" --arg review "$review" --argjson deps "$dep_json" \
+    --arg note "$note" --arg rec "$rec" --argjson opts "$opt_json" --arg group "$group" --arg rgroup "$rgroup" \
+    --arg ts "$(now)" "$filter" <<<"$board")
   save "$(jq .board <<<"$out")"
   jq -r .id <<<"$out"
 }
@@ -185,8 +245,40 @@ cmd_set_group() {
   load | jq -e --arg id "$id" 'any(.entries[]; .id == $id and .kind == "decision")' >/dev/null \
     || die "set-group: $id is not a decision"
   group=$(group_name "$group" set-group)
-  save "$(load | jq --arg id "$id" --arg g "$group" --arg ts "$(now)" \
-    '.entries |= map(if .id == $id then .group = $g | .updated = $ts else . end)')"
+  local board; board=$(load)
+  local cur_group; cur_group=$(jq -r --arg id "$id" 'first(.entries[] | select(.id == $id)) | .group // "Other"' <<<"$board")
+  if [[ $cur_group == "$group" ]]; then
+    save "$(jq --arg id "$id" --arg g "$group" --arg ts "$(now)" \
+      '.entries |= map(if .id == $id then .group = $g | .updated = $ts else . end)' <<<"$board")"
+    jq -r --arg id "$id" '.entries[] | select(.id == $id) | .id' <<<"$board" | head -1
+    return
+  fi
+  # Since a decision's id always starts with its ticket's letter, moving it to a different ticket means the
+  # id itself changes to stay consistent with the scheme -- it is renumbered into the target ticket's
+  # sequence. Every reference elsewhere on the board (depends_on, "superseded:<id>" flags) is rewritten too.
+  local filter="$JQLIB"'
+    (.tickets // {}) as $tickets
+    | ticket_letter($group; $tickets) as $letter
+    | ($tickets + {($group): $letter}) as $tickets2
+    | next_ticket_num($letter; .entries) as $num
+    | ($letter + ($num | tostring)) as $newid
+    | .tickets = $tickets2
+    | .entries |= map(
+        .id as $eid
+        | (if $eid == $old then . + {id: $newid, group: $group, updated: $ts} else . end)
+        | (.depends_on // []) as $deps
+        | (if ($deps | any(. as $d | $d == $old)) then
+            .depends_on |= map(. as $d | if $d == $old then $newid else $d end)
+          else . end)
+        | (.flags // []) as $flgs
+        | (if ($flgs | any(. == ("superseded:" + $old))) then
+            .flags |= map(if . == ("superseded:" + $old) then "superseded:" + $newid else . end)
+          else . end))
+    | {board: ., new_id: $newid}'
+  local out
+  out=$(jq --arg old "$id" --arg group "$group" --arg ts "$(now)" "$filter" <<<"$board")
+  save "$(jq .board <<<"$out")"
+  jq -r .new_id <<<"$out"
 }
 
 flag() { if [[ -n $1 ]]; then echo true; else echo false; fi; }
@@ -561,6 +653,91 @@ cmd_import_legacy() {
   jq -r '"imported open \(.open), imported settled \(.settled), skipped \(.skipped)"' <<<"$out"
 }
 
+# Rewrites the "id" field of every JSON-object line in a jsonl file per $map (old id -> new id), leaving
+# non-object/unparseable lines and lines without a mapped id untouched. No-op if the file doesn't exist.
+# Prints the number of lines whose id was rewritten.
+rewrite_id_refs() {
+  local file=$1 map=$2
+  [[ -f $file ]] || { echo 0; return 0; }
+  local tmp; tmp=$(mktemp "$DIR/.rewrite.XXXXXX")
+  local changed=0 line
+  while IFS= read -r line || [[ -n $line ]]; do
+    if [[ -z $line ]]; then printf '\n' >> "$tmp"; continue; fi
+    if jq -e 'type == "object"' <<<"$line" >/dev/null 2>&1; then
+      local newline
+      newline=$(jq -c --argjson m "$map" '(.id? // null) as $lid
+        | if ($lid | type) == "string" and ($m | has($lid)) then .id = $m[$lid] else . end' <<<"$line")
+      [[ $newline == "$line" ]] || changed=$((changed + 1))
+      printf '%s\n' "$newline" >> "$tmp"
+    else
+      printf '%s\n' "$line" >> "$tmp"
+    fi
+  done < "$file"
+  mv "$tmp" "$file"
+  echo "$changed"
+}
+
+# Live-renames every old D-001-style decision id on this ONE project's board to the ticket-letter scheme, in
+# one atomic (with_lock) operation: rewrites the id itself, every depends_on reference, every
+# "superseded:<id>" flag, and the id field of every line in answers.jsonl/answers.done.jsonl. Idempotent: an
+# id already in the new format (anything not matching ^D-[0-9]+$) is left alone, so a second run finds no
+# old-format ids left and is a safe no-op. Ticket letters/numbers are assigned in old-id (creation) order,
+# same rule as 'add decision': the first group name seen gets the next unused letter, reusing the letter
+# already recorded in 'tickets' for a name it has already seen (including one added since this feature
+# shipped). Task ids are never touched.
+cmd_migrate_ids() {
+  local project=${1:-}
+  [[ -n $project ]] || die "migrate-ids: <project> required"
+  [[ $project == "$HERDMASTER_PROJECT" ]] || die "migrate-ids: <project> must match \$HERDMASTER_PROJECT"
+  local board; board=$(load)
+  local plan
+  plan=$(jq "$JQLIB"'
+    . as $doc
+    | ($doc.entries) as $allEntries
+    | ($doc.tickets // {}) as $tickets0
+    | ([$allEntries[] | select(.kind == "decision" and (.id | test("^D-[0-9]+$")))]
+        | sort_by(.id | ltrimstr("D-") | tonumber)) as $olds
+    | reduce $olds[] as $e ({tickets: $tickets0, counts: {}, map: {}};
+        ($e.group // "Other") as $g
+        | .tickets as $t
+        | (ticket_letter($g; $t)) as $letter
+        | (.tickets + {($g): $letter}) as $t2
+        | (if (.counts | has($letter)) then .counts[$letter]
+           else (next_ticket_num($letter; $allEntries) - 1) end) as $base
+        | ($base + 1) as $n
+        | (.counts + {($letter): $n}) as $c2
+        | (.map + {($e.id): ($letter + ($n | tostring))}) as $m2
+        | {tickets: $t2, counts: $c2, map: $m2})
+    | {tickets: .tickets, map: .map}
+  ' <<<"$board")
+  local map_json tickets_json count
+  map_json=$(jq -c .map <<<"$plan")
+  tickets_json=$(jq -c .tickets <<<"$plan")
+  count=$(jq 'length' <<<"$map_json")
+  if (( count > 0 )); then
+    local new_board
+    new_board=$(jq --argjson m "$map_json" --argjson t "$tickets_json" '
+      .tickets = $t
+      | .entries |= map(
+          .id as $eid
+          | (if ($m | has($eid)) then . + {id: $m[$eid]} else . end)
+          | (.depends_on // []) as $deps
+          | (if ($deps | any(. as $d | $m | has($d))) then
+              .depends_on |= map(. as $d | if ($m | has($d)) then $m[$d] else $d end)
+            else . end)
+          | (.flags // []) as $flgs
+          | (if ($flgs | any(. as $f | ($f | startswith("superseded:")) and ($f[11:] as $sid | $m | has($sid)))) then
+              .flags |= map(. as $f | if ($f | startswith("superseded:")) and ($f[11:] as $sid | $m | has($sid))
+                then "superseded:" + $m[$f[11:]] else $f end)
+            else . end))' <<<"$board")
+    save "$new_board"
+    rewrite_id_refs "$DIR/answers.jsonl" "$map_json" >/dev/null
+    rewrite_id_refs "$DIR/answers.done.jsonl" "$map_json" >/dev/null
+  fi
+  jq -r 'to_entries[] | "\(.key) -> \(.value)"' <<<"$map_json"
+  echo "migrated $count decision id(s)"
+}
+
 sub=${1:-}; shift || true
 case $sub in
   add) with_lock cmd_add "$@" ;;
@@ -575,8 +752,9 @@ case $sub in
   release-when-done) with_lock cmd_release_when_done "$@" ;;
   settings) if [[ ${1:-} == set ]]; then with_lock cmd_settings "$@"; else cmd_settings "$@"; fi ;;
   import-legacy) with_lock cmd_import_legacy ;;
+  migrate-ids) with_lock cmd_migrate_ids "$@" ;;
   archive) with_lock cmd_archive ;;
   count) cmd_count ;;
   show) cmd_show ;;
-  *) sed -n '2,19p' "$0"; exit 2 ;;
+  *) sed -n '2,52p' "$0"; exit 2 ;;
 esac

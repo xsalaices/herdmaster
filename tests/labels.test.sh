@@ -16,7 +16,7 @@ out=$("$L" --dry-run workspace ws-1)
 has "$out" "workspace report-metadata"
 has "$out" "--token project=demo"
 has "$out" "--token decisions=2"
-"$B" status D-001 settled
+"$B" status A1 settled
 has "$("$L" --dry-run workspace ws-1)" "--token decisions=1"
 
 out=$("$L" --dry-run pane pane-1 T-001)

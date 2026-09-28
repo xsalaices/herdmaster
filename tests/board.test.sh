@@ -10,7 +10,7 @@ eq() { [[ $1 == "$2" ]] || { echo "FAIL: got '$1' want '$2'" >&2; exit 1; }; }
 d=$("$B" add decision "Sidebar or top nav")
 t1=$("$B" add task "Settings page" --review user --depends "$d")
 t2=$("$B" add task "Docs")
-eq "$d $t1 $t2" "D-001 T-001 T-002"
+eq "$d $t1 $t2" "A1 T-001 T-002"
 eq "$(jq -r '.schema_version' "$f")" 1
 eq "$(jq -r --arg i "$t1" '.entries[] | select(.id == $i) | .depends_on[0]' "$f")" "$d"
 "$B" add task x --depends D-999 2>/dev/null && { echo "FAIL: unknown dep accepted" >&2; exit 1; }
@@ -20,8 +20,8 @@ eq "$(jq -r --arg i "$t1" '.entries[] | select(.id == $i) | .depends_on[0]' "$f"
 eq "$(jq -r '.entries[] | select(.id == "T-001") | .attempts[0].feedback' "$f")" "Spacing too tight"
 
 "$B" supersede "$d"
-eq "$(jq -r '.entries[] | select(.id == "D-001") | .status' "$f")" superseded
-eq "$(jq -r '.entries[] | select(.id == "T-001") | .flags[0]' "$f")" "superseded:D-001"
+eq "$(jq -r --arg d "$d" '.entries[] | select(.id == $d) | .status' "$f")" superseded
+eq "$(jq -r '.entries[] | select(.id == "T-001") | .flags[0]' "$f")" "superseded:$d"
 eq "$(jq -r '.entries[] | select(.id == "T-002") | .flags // "none"' "$f")" none
 
 n=$("$B" add decision "Pick one" --note "Because X" --recommend "Yes, because Y")
@@ -50,10 +50,15 @@ eq "$("$B" show | grep -A2 "^$o")" "$(printf '%s\topen\tuser\tPick layout\n    A
 g1=$("$B" add decision "Pick colors" --group "  Theme  " --option "A|Warm" --option "B|Cool")
 eq "$(jq -r --arg g "$g1" '.entries[] | select(.id == $g) | .group' "$f")" Theme
 eq "$(jq -r --arg n "$n" '.entries[] | select(.id == $n) | .group // "none"' "$f")" none
-"$B" set-group "$n" "Layout"
-eq "$(jq -r --arg n "$n" '.entries[] | select(.id == $n) | .group' "$f")" Layout
-eq "$("$B" show | grep "^$n" | awk -F'\t' '{print $NF}')" "ticket: Layout"
+# Moving a decision to a different ticket renumbers its id into the new ticket's sequence (the id always
+# starts with its ticket's letter), so set-group prints the new id and every old reference is stale.
+n2=$("$B" set-group "$n" "Layout")
+[[ $n2 != "$n" ]] || { echo "FAIL: set-group did not rename id across tickets" >&2; exit 1; }
+eq "$(jq -r --arg n "$n2" '.entries[] | select(.id == $n) | .group' "$f")" Layout
+eq "$(jq -r --arg n "$n" '[.entries[] | select(.id == $n)] | length' "$f")" 0
+eq "$("$B" show | grep "^$n2" | awk -F'\t' '{print $NF}')" "ticket: Layout"
 eq "$("$B" show | grep -c 'ticket:')" 2
+n=$n2
 for bad in "--group ''" "--group '   '" "--group $(printf 'x%.0s' $(seq 61))"; do
   eval "\"\$B\" add decision Bad $bad" 2>/dev/null && { echo "FAIL: accepted group '$bad'" >&2; exit 1; }
 done
@@ -305,4 +310,94 @@ eq "$("$B" archive)" "archived 7"
 eq "$(jq '[.entries[] | select(.status == "done" or .status == "cancelled")] | length' "$f")" 200
 eq "$(jq '.entries | length' "$T/.claude/orchestrator/demo/tasks-archive.json")" 7
 eq "$("$B" archive)" ""
+
+# --- Ticket-letter decision ids: sequential per-ticket numbering, isolated in a fresh project so the
+# letter/number assignments below are exact and don't depend on the giant scenario above. ---
+tf="$T/.claude/orchestrator/tix/tasks.json"
+tx1=$(HERDMASTER_PROJECT=tix "$B" add decision "Q1" --group Nav)
+tx2=$(HERDMASTER_PROJECT=tix "$B" add decision "Q2" --group Nav)
+tx3=$(HERDMASTER_PROJECT=tix "$B" add decision "Q3" --group Perf)
+eq "$tx1 $tx2 $tx3" "A1 A2 B1"
+eq "$(jq -c '.tickets' "$tf")" '{"Nav":"A","Perf":"B"}'
+# A decision with no --group goes under a ticket literally named "Other", with its own sequence.
+tx4=$(HERDMASTER_PROJECT=tix "$B" add decision "Q4")
+tx5=$(HERDMASTER_PROJECT=tix "$B" add decision "Q5")
+eq "$tx4 $tx5" "C1 C2"
+eq "$(jq -r --arg i "$tx4" '.entries[] | select(.id == $i) | .group // "none"' "$tf")" none
+eq "$(jq -c '.tickets' "$tf")" '{"Nav":"A","Perf":"B","Other":"C"}'
+# Adding a fourth question to an existing ticket continues that ticket's own sequence.
+tx6=$(HERDMASTER_PROJECT=tix "$B" add decision "Q6" --group Nav)
+eq "$tx6" "A3"
+# set-group across tickets renumbers into the target ticket's sequence and rewrites every reference.
+HERDMASTER_PROJECT=tix "$B" add task "Depends on Q3" --depends "$tx3" >/dev/null
+HERDMASTER_PROJECT=tix "$B" supersede "$tx4"
+tx3b=$(HERDMASTER_PROJECT=tix "$B" set-group "$tx3" Nav)
+eq "$tx3b" "A4"
+eq "$(jq -r --arg i "$tx3b" '.entries[] | select(.kind == "task") | .depends_on[0]' "$tf")" "$tx3b"
+eq "$(jq -c '[.entries[] | select(.id == "'"$tx3"'")]' "$tf")" '[]'
+# Moving a decision back to the ticket it is already in is a no-op (same id, no spurious renumber).
+tx6b=$(HERDMASTER_PROJECT=tix "$B" set-group "$tx6" Nav)
+eq "$tx6b" "$tx6"
+
+# --- migrate-ids: synthetic pre-migration fixtures only, never a real project. ---
+mig() { HERDMASTER_PROJECT="$1" "$B" migrate-ids "$1"; }
+mdir() { echo "$T/.claude/orchestrator/$1"; }
+
+# Fixture 1: multiple tickets, depends_on, a superseded: flag, an ungrouped decision, and answers files
+# (live + already-processed) that reference old ids. Task ids must be left untouched.
+m1=$(mdir mig1); mkdir -p "$m1"
+cat > "$m1/tasks.json" <<JSON
+{"schema_version":1,"entries":[
+  {"id":"D-001","kind":"decision","title":"Sidebar or top nav","status":"open","review":"user","depends_on":[],"attempts":[],"group":"Nav","created":"2025-01-01T00:00:00Z","updated":"2025-01-01T00:00:00Z"},
+  {"id":"D-002","kind":"decision","title":"Pick colors","status":"open","review":"user","depends_on":["D-001"],"attempts":[],"group":"Nav","created":"2025-01-02T00:00:00Z","updated":"2025-01-02T00:00:00Z"},
+  {"id":"D-003","kind":"decision","title":"Pick font","status":"settled","review":"user","depends_on":[],"attempts":[],"created":"2025-01-03T00:00:00Z","updated":"2025-01-03T00:00:00Z"},
+  {"id":"T-001","kind":"task","title":"Build page","status":"working","review":"auto","depends_on":["D-001"],"attempts":[],"created":"2025-01-01T00:00:00Z","updated":"2025-01-01T00:00:00Z"},
+  {"id":"T-002","kind":"task","title":"Old task","status":"blocked","review":"auto","depends_on":[],"attempts":[],"flags":["superseded:D-003"],"created":"2025-01-01T00:00:00Z","updated":"2025-01-01T00:00:00Z"}
+]}
+JSON
+printf '{"project":"mig1","id":"D-002","key":"A","text":"Warm","at":"2025-01-02T01:00:00Z"}\n' > "$m1/answers.jsonl"
+printf '{"project":"mig1","id":"D-003","key":"A","text":"Serif","at":"2025-01-03T01:00:00Z","result":"settled"}\n' > "$m1/answers.done.jsonl"
+out1=$(mig mig1)
+eq "$(head -n3 <<<"$out1")" "$(printf 'D-001 -> A1\nD-002 -> A2\nD-003 -> B1')"
+eq "$(tail -n1 <<<"$out1")" "migrated 3 decision id(s)"
+eq "$(jq -c '[.entries[] | {id, group, depends_on, flags}]' "$m1/tasks.json")" \
+  '[{"id":"A1","group":"Nav","depends_on":[],"flags":null},{"id":"A2","group":"Nav","depends_on":["A1"],"flags":null},{"id":"B1","group":null,"depends_on":[],"flags":null},{"id":"T-001","group":null,"depends_on":["A1"],"flags":null},{"id":"T-002","group":null,"depends_on":[],"flags":["superseded:B1"]}]'
+eq "$(jq -c '.tickets' "$m1/tasks.json")" '{"Nav":"A","Other":"B"}'
+eq "$(jq -r '.id' "$m1/answers.jsonl")" A2
+eq "$(jq -r '.id' "$m1/answers.done.jsonl")" B1
+# Idempotent: running it again on the now-migrated board changes nothing.
+before1=$(cat "$m1/tasks.json"); before1a=$(cat "$m1/answers.jsonl"); before1d=$(cat "$m1/answers.done.jsonl")
+eq "$(mig mig1)" "migrated 0 decision id(s)"
+eq "$(cat "$m1/tasks.json")" "$before1"
+eq "$(cat "$m1/answers.jsonl")" "$before1a"
+eq "$(cat "$m1/answers.done.jsonl")" "$before1d"
+
+# Fixture 2: no depends_on, no flags, no answers files, no groups at all -- everything lands under Other.
+m2=$(mdir mig2); mkdir -p "$m2"
+cat > "$m2/tasks.json" <<'JSON'
+{"schema_version":1,"entries":[
+  {"id":"D-001","kind":"decision","title":"Alpha","status":"open","review":"user","depends_on":[],"attempts":[],"created":"2025-02-01T00:00:00Z","updated":"2025-02-01T00:00:00Z"},
+  {"id":"D-002","kind":"decision","title":"Beta","status":"open","review":"user","depends_on":[],"attempts":[],"created":"2025-02-02T00:00:00Z","updated":"2025-02-02T00:00:00Z"}
+]}
+JSON
+out2=$(mig mig2)
+eq "$out2" "$(printf 'D-001 -> A1\nD-002 -> A2\nmigrated 2 decision id(s)')"
+[[ ! -e "$m2/answers.jsonl" ]] || { echo "FAIL: migrate-ids created answers.jsonl out of nothing" >&2; exit 1; }
+eq "$(mig mig2)" "migrated 0 decision id(s)"
+
+# Fixture 3: already fully in the new scheme -- migrate-ids on a board with no old-style ids is a pure no-op.
+m3=$(mdir mig3); mkdir -p "$m3"
+cat > "$m3/tasks.json" <<'JSON'
+{"schema_version":1,"tickets":{"Other":"A"},"entries":[
+  {"id":"A1","kind":"decision","title":"Already new","status":"open","review":"user","group":null,"depends_on":[],"attempts":[],"created":"2025-03-01T00:00:00Z","updated":"2025-03-01T00:00:00Z"},
+  {"id":"T-001","kind":"task","title":"t","status":"working","review":"auto","depends_on":[],"attempts":[],"created":"2025-03-01T00:00:00Z","updated":"2025-03-01T00:00:00Z"}
+]}
+JSON
+before3=$(cat "$m3/tasks.json")
+eq "$(mig mig3)" "migrated 0 decision id(s)"
+eq "$(cat "$m3/tasks.json")" "$before3"
+
+# migrate-ids refuses to run against any project other than $HERDMASTER_PROJECT.
+HERDMASTER_PROJECT=mig1 "$B" migrate-ids mig2 2>/dev/null && { echo "FAIL: migrate-ids accepted a mismatched project" >&2; exit 1; }
+
 echo "ok"

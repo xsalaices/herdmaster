@@ -80,6 +80,34 @@ release_word() {
   echo "$w"
 }
 
+# Color is applied here, as a pass over already-rendered plain text, never inside the jq
+# filter: codes only wrap whole literal segments, never split one, so this stays a pure
+# cosmetic layer over the same text --once and the tests exercise.
+COLOR=0
+[[ -t 1 && -z ${NO_COLOR:-} ]] && COLOR=1
+# Stateful (tracks which section a line is in, so a ticket named e.g. "working" never gets
+# colored as a task-status line): awk, not sed, on purpose.
+paint() {
+  (( COLOR )) || { cat; return; }
+  awk -v reset=$'\033[0m' -v bold=$'\033[1m' -v dim=$'\033[2m' -v cyan=$'\033[36m' -v green=$'\033[1;32m' '
+    function colorize(s,   out) {
+      out = s
+      gsub(/\(none\)/, dim "(none)" reset, out)
+      gsub(/Ready to hand off/, green "Ready to hand off" reset, out)
+      return out
+    }
+    /^Tickets$/ { section="tickets"; print bold $0 reset; next }
+    /^Tasks$/   { section="tasks"; print bold $0 reset; next }
+    section=="tickets" && match($0, /^  [A-Za-z]+ [^ ].*   /) {
+      print bold cyan substr($0, RSTART, RLENGTH) reset colorize(substr($0, RSTART+RLENGTH)); next
+    }
+    section=="tasks" && match($0, /^  (in review|working|ready to [a-z]+)/) {
+      print bold substr($0, RSTART, RLENGTH) reset colorize(substr($0, RSTART+RLENGTH)); next
+    }
+    { print colorize($0) }
+  '
+}
+
 render() {
   if [[ ! -f $BOARD ]]; then
     echo "No board file yet for project '$PROJECT'."
@@ -91,7 +119,7 @@ render() {
     echo "Board file is invalid JSON."
     return
   fi
-  printf '%s\n' "$out"
+  printf '%s\n' "$out" | paint
 }
 
 if (( ONCE )); then

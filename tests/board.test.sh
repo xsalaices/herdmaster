@@ -339,4 +339,65 @@ eq "$(jq -c '[.entries[] | select(.id == "'"$tx3"'")]' "$tf")" '[]'
 tx6b=$(HERDMASTER_PROJECT=tix "$B" set-group "$tx6" Nav)
 eq "$tx6b" "$tx6"
 
+# --- migrate-ids: synthetic pre-migration fixtures only, never a real project. ---
+mig() { HERDMASTER_PROJECT="$1" "$B" migrate-ids "$1"; }
+mdir() { echo "$T/.claude/orchestrator/$1"; }
+
+# Fixture 1: multiple tickets, depends_on, a superseded: flag, an ungrouped decision, and answers files
+# (live + already-processed) that reference old ids. Task ids must be left untouched.
+m1=$(mdir mig1); mkdir -p "$m1"
+cat > "$m1/tasks.json" <<JSON
+{"schema_version":1,"entries":[
+  {"id":"D-001","kind":"decision","title":"Sidebar or top nav","status":"open","review":"user","depends_on":[],"attempts":[],"group":"Nav","created":"2025-01-01T00:00:00Z","updated":"2025-01-01T00:00:00Z"},
+  {"id":"D-002","kind":"decision","title":"Pick colors","status":"open","review":"user","depends_on":["D-001"],"attempts":[],"group":"Nav","created":"2025-01-02T00:00:00Z","updated":"2025-01-02T00:00:00Z"},
+  {"id":"D-003","kind":"decision","title":"Pick font","status":"settled","review":"user","depends_on":[],"attempts":[],"created":"2025-01-03T00:00:00Z","updated":"2025-01-03T00:00:00Z"},
+  {"id":"T-001","kind":"task","title":"Build page","status":"working","review":"auto","depends_on":["D-001"],"attempts":[],"created":"2025-01-01T00:00:00Z","updated":"2025-01-01T00:00:00Z"},
+  {"id":"T-002","kind":"task","title":"Old task","status":"blocked","review":"auto","depends_on":[],"attempts":[],"flags":["superseded:D-003"],"created":"2025-01-01T00:00:00Z","updated":"2025-01-01T00:00:00Z"}
+]}
+JSON
+printf '{"project":"mig1","id":"D-002","key":"A","text":"Warm","at":"2025-01-02T01:00:00Z"}\n' > "$m1/answers.jsonl"
+printf '{"project":"mig1","id":"D-003","key":"A","text":"Serif","at":"2025-01-03T01:00:00Z","result":"settled"}\n' > "$m1/answers.done.jsonl"
+out1=$(mig mig1)
+eq "$(head -n3 <<<"$out1")" "$(printf 'D-001 -> A1\nD-002 -> A2\nD-003 -> B1')"
+eq "$(tail -n1 <<<"$out1")" "migrated 3 decision id(s)"
+eq "$(jq -c '[.entries[] | {id, group, depends_on, flags}]' "$m1/tasks.json")" \
+  '[{"id":"A1","group":"Nav","depends_on":[],"flags":null},{"id":"A2","group":"Nav","depends_on":["A1"],"flags":null},{"id":"B1","group":null,"depends_on":[],"flags":null},{"id":"T-001","group":null,"depends_on":["A1"],"flags":null},{"id":"T-002","group":null,"depends_on":[],"flags":["superseded:B1"]}]'
+eq "$(jq -c '.tickets' "$m1/tasks.json")" '{"Nav":"A","Other":"B"}'
+eq "$(jq -r '.id' "$m1/answers.jsonl")" A2
+eq "$(jq -r '.id' "$m1/answers.done.jsonl")" B1
+# Idempotent: running it again on the now-migrated board changes nothing.
+before1=$(cat "$m1/tasks.json"); before1a=$(cat "$m1/answers.jsonl"); before1d=$(cat "$m1/answers.done.jsonl")
+eq "$(mig mig1)" "migrated 0 decision id(s)"
+eq "$(cat "$m1/tasks.json")" "$before1"
+eq "$(cat "$m1/answers.jsonl")" "$before1a"
+eq "$(cat "$m1/answers.done.jsonl")" "$before1d"
+
+# Fixture 2: no depends_on, no flags, no answers files, no groups at all -- everything lands under Other.
+m2=$(mdir mig2); mkdir -p "$m2"
+cat > "$m2/tasks.json" <<'JSON'
+{"schema_version":1,"entries":[
+  {"id":"D-001","kind":"decision","title":"Alpha","status":"open","review":"user","depends_on":[],"attempts":[],"created":"2025-02-01T00:00:00Z","updated":"2025-02-01T00:00:00Z"},
+  {"id":"D-002","kind":"decision","title":"Beta","status":"open","review":"user","depends_on":[],"attempts":[],"created":"2025-02-02T00:00:00Z","updated":"2025-02-02T00:00:00Z"}
+]}
+JSON
+out2=$(mig mig2)
+eq "$out2" "$(printf 'D-001 -> A1\nD-002 -> A2\nmigrated 2 decision id(s)')"
+[[ ! -e "$m2/answers.jsonl" ]] || { echo "FAIL: migrate-ids created answers.jsonl out of nothing" >&2; exit 1; }
+eq "$(mig mig2)" "migrated 0 decision id(s)"
+
+# Fixture 3: already fully in the new scheme -- migrate-ids on a board with no old-style ids is a pure no-op.
+m3=$(mdir mig3); mkdir -p "$m3"
+cat > "$m3/tasks.json" <<'JSON'
+{"schema_version":1,"tickets":{"Other":"A"},"entries":[
+  {"id":"A1","kind":"decision","title":"Already new","status":"open","review":"user","group":null,"depends_on":[],"attempts":[],"created":"2025-03-01T00:00:00Z","updated":"2025-03-01T00:00:00Z"},
+  {"id":"T-001","kind":"task","title":"t","status":"working","review":"auto","depends_on":[],"attempts":[],"created":"2025-03-01T00:00:00Z","updated":"2025-03-01T00:00:00Z"}
+]}
+JSON
+before3=$(cat "$m3/tasks.json")
+eq "$(mig mig3)" "migrated 0 decision id(s)"
+eq "$(cat "$m3/tasks.json")" "$before3"
+
+# migrate-ids refuses to run against any project other than $HERDMASTER_PROJECT.
+HERDMASTER_PROJECT=mig1 "$B" migrate-ids mig2 2>/dev/null && { echo "FAIL: migrate-ids accepted a mismatched project" >&2; exit 1; }
+
 echo "ok"

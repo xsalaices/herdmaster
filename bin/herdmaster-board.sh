@@ -12,6 +12,14 @@
 #          ticket's letter, the id CHANGES too -- it is renumbered into the target ticket's sequence. Every
 #          reference to the old id elsewhere on the board (depends_on, "superseded:<id>" flags) is rewritten
 #          to the new id in the same atomic write. Prints the new id.
+#        herdmaster-board.sh migrate-ids <project>
+#          one-time live rename of every old D-001-style decision id on <project>'s board to the new
+#          ticket-letter scheme, atomically. Renames the id everywhere it is referenced within that
+#          project's files: depends_on, "superseded:<id>" flags, answers.jsonl and answers.done.jsonl.
+#          <project> must equal $HERDMASTER_PROJECT (a guardrail against migrating the wrong board).
+#          Prints one "OLD -> NEW" line per renamed decision, then a summary count. Idempotent: an id
+#          already in the new format is left alone, so a second run against an already-migrated board is a
+#          safe no-op. Never touches task ids.
 #        herdmaster-board.sh set-review <task id> [--summary S] [--diff D] [--tests T] [--preview URL] [--screenshot PATH]... [--link "label|url"]...
 #        herdmaster-board.sh set-options <id> --option "A|text" [--option "B|text"] [--recommend-key K]
 #        herdmaster-board.sh status <id> <state> [answer]     (answer only when settling a decision)
@@ -34,6 +42,9 @@
 #        herdmaster-board.sh import-legacy
 #        herdmaster-board.sh archive
 #        herdmaster-board.sh count | show
+# FLEET RULE: migrate-ids does a live, board-wide id rename -- never run it against a real project's board
+# except the one you mean to migrate, and only once you are sure. It refuses to run unless <project>
+# matches $HERDMASTER_PROJECT.
 # A settled decision or an answers.jsonl line NEVER by itself authorizes merge, deploy or push: those
 # still require the master's explicit instruction on the owner's word (see roles/orchestrator.md).
 # Project comes from $HERDMASTER_PROJECT. Every load-modify-save cycle (any subcommand but show/count)
@@ -642,6 +653,90 @@ cmd_import_legacy() {
   jq -r '"imported open \(.open), imported settled \(.settled), skipped \(.skipped)"' <<<"$out"
 }
 
+# Rewrites the "id" field of every JSON-object line in a jsonl file per $map (old id -> new id), leaving
+# non-object/unparseable lines and lines without a mapped id untouched. No-op if the file doesn't exist.
+# Prints the number of lines whose id was rewritten.
+rewrite_id_refs() {
+  local file=$1 map=$2
+  [[ -f $file ]] || { echo 0; return 0; }
+  local tmp; tmp=$(mktemp "$DIR/.rewrite.XXXXXX")
+  local changed=0 line
+  while IFS= read -r line || [[ -n $line ]]; do
+    if [[ -z $line ]]; then printf '\n' >> "$tmp"; continue; fi
+    if jq -e 'type == "object"' <<<"$line" >/dev/null 2>&1; then
+      local newline
+      newline=$(jq -c --argjson m "$map" '(.id? // null) as $lid
+        | if ($lid | type) == "string" and ($m | has($lid)) then .id = $m[$lid] else . end' <<<"$line")
+      [[ $newline == "$line" ]] || changed=$((changed + 1))
+      printf '%s\n' "$newline" >> "$tmp"
+    else
+      printf '%s\n' "$line" >> "$tmp"
+    fi
+  done < "$file"
+  mv "$tmp" "$file"
+  echo "$changed"
+}
+
+# Live-renames every old D-001-style decision id on this ONE project's board to the ticket-letter scheme, in
+# one atomic (with_lock) operation: rewrites the id itself, every depends_on reference, every
+# "superseded:<id>" flag, and the id field of every line in answers.jsonl/answers.done.jsonl. Idempotent: an
+# id already in the new format (anything not matching ^D-[0-9]+$) is left alone, so a second run finds no
+# old-format ids left and is a safe no-op. Ticket letters/numbers are assigned in old-id (creation) order,
+# same rule as 'add decision': the first group name seen gets the next unused letter, reusing the letter
+# already recorded in 'tickets' for a name it has already seen (including one added since this feature
+# shipped). Task ids are never touched.
+cmd_migrate_ids() {
+  local project=${1:-}
+  [[ -n $project ]] || die "migrate-ids: <project> required"
+  [[ $project == "$HERDMASTER_PROJECT" ]] || die "migrate-ids: <project> must match \$HERDMASTER_PROJECT"
+  local board; board=$(load)
+  local plan
+  plan=$(jq "$JQLIB"'
+    . as $doc
+    | ($doc.entries) as $allEntries
+    | ($doc.tickets // {}) as $tickets0
+    | ([$allEntries[] | select(.kind == "decision" and (.id | test("^D-[0-9]+$")))]
+        | sort_by(.id | ltrimstr("D-") | tonumber)) as $olds
+    | reduce $olds[] as $e ({tickets: $tickets0, counts: {}, map: {}};
+        ($e.group // "Other") as $g
+        | .tickets as $t
+        | (ticket_letter($g; $t)) as $letter
+        | (.tickets + {($g): $letter}) as $t2
+        | (if (.counts | has($letter)) then .counts[$letter]
+           else (next_ticket_num($letter; $allEntries) - 1) end) as $base
+        | ($base + 1) as $n
+        | (.counts + {($letter): $n}) as $c2
+        | (.map + {($e.id): ($letter + ($n | tostring))}) as $m2
+        | {tickets: $t2, counts: $c2, map: $m2})
+    | {tickets: .tickets, map: .map}
+  ' <<<"$board")
+  local map_json tickets_json count
+  map_json=$(jq -c .map <<<"$plan")
+  tickets_json=$(jq -c .tickets <<<"$plan")
+  count=$(jq 'length' <<<"$map_json")
+  if (( count > 0 )); then
+    local new_board
+    new_board=$(jq --argjson m "$map_json" --argjson t "$tickets_json" '
+      .tickets = $t
+      | .entries |= map(
+          .id as $eid
+          | (if ($m | has($eid)) then . + {id: $m[$eid]} else . end)
+          | (.depends_on // []) as $deps
+          | (if ($deps | any(. as $d | $m | has($d))) then
+              .depends_on |= map(. as $d | if ($m | has($d)) then $m[$d] else $d end)
+            else . end)
+          | (.flags // []) as $flgs
+          | (if ($flgs | any(. as $f | ($f | startswith("superseded:")) and ($f[11:] as $sid | $m | has($sid)))) then
+              .flags |= map(. as $f | if ($f | startswith("superseded:")) and ($f[11:] as $sid | $m | has($sid))
+                then "superseded:" + $m[$f[11:]] else $f end)
+            else . end))' <<<"$board")
+    save "$new_board"
+    rewrite_id_refs "$DIR/answers.jsonl" "$map_json" >/dev/null
+    rewrite_id_refs "$DIR/answers.done.jsonl" "$map_json" >/dev/null
+  fi
+  jq -r 'to_entries[] | "\(.key) -> \(.value)"' <<<"$map_json"
+  echo "migrated $count decision id(s)"
+}
 
 sub=${1:-}; shift || true
 case $sub in
@@ -657,8 +752,9 @@ case $sub in
   release-when-done) with_lock cmd_release_when_done "$@" ;;
   settings) if [[ ${1:-} == set ]]; then with_lock cmd_settings "$@"; else cmd_settings "$@"; fi ;;
   import-legacy) with_lock cmd_import_legacy ;;
+  migrate-ids) with_lock cmd_migrate_ids "$@" ;;
   archive) with_lock cmd_archive ;;
   count) cmd_count ;;
   show) cmd_show ;;
-  *) sed -n '2,41p' "$0"; exit 2 ;;
+  *) sed -n '2,52p' "$0"; exit 2 ;;
 esac

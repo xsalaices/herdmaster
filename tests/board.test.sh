@@ -247,6 +247,58 @@ done
 eq "$("$B" consume-answers demo | head -1)" "settled 0, refused 1, unparseable 0"
 [[ ! -e "$adir/answers.jsonl" ]] || { echo "FAIL: the concurrent line should now be claimed" >&2; exit 1; }
 
+# Concurrent writers: two 'add' calls launched together against the same board must not clobber
+# each other's read-modify-write, and must get distinct sequential ids (proves the flock in with_lock
+# serializes the load-modify-save cycle instead of racing).
+before_n=$(jq '.entries | length' "$f")
+"$B" add task "Concurrent A" > "$T/conc_a.out" 2> "$T/conc_a.err" &
+conc_a_pid=$!
+"$B" add task "Concurrent B" > "$T/conc_b.out" 2> "$T/conc_b.err" &
+conc_b_pid=$!
+wait "$conc_a_pid"; conc_a_rc=$?
+wait "$conc_b_pid"; conc_b_rc=$?
+eq "$conc_a_rc" 0
+eq "$conc_b_rc" 0
+conc_a_id=$(cat "$T/conc_a.out")
+conc_b_id=$(cat "$T/conc_b.out")
+[[ $conc_a_id != "$conc_b_id" ]] || { echo "FAIL: concurrent adds produced duplicate id $conc_a_id" >&2; exit 1; }
+eq "$(jq '.entries | length' "$f")" "$((before_n + 2))"
+eq "$(jq -r --arg i "$conc_a_id" '.entries[] | select(.id == $i) | .title' "$f")" "Concurrent A"
+eq "$(jq -r --arg i "$conc_b_id" '.entries[] | select(.id == $i) | .title' "$f")" "Concurrent B"
+
+# Stress variant: a burst of concurrent adds must all land, with unique sequential ids and no gaps.
+before_stress=$(jq '.entries | length' "$f")
+stress_pids=()
+for i in $(seq 1 12); do
+  "$B" add task "Stress $i" > "$T/stress_$i.out" &
+  stress_pids+=($!)
+done
+for pid in "${stress_pids[@]}"; do wait "$pid"; done
+stress_ids=()
+for i in $(seq 1 12); do stress_ids+=("$(cat "$T/stress_$i.out")"); done
+eq "$(printf '%s\n' "${stress_ids[@]}" | sort -u | wc -l | tr -d ' ')" 12
+eq "$(jq '.entries | length' "$f")" "$((before_stress + 12))"
+for id in "${stress_ids[@]}"; do
+  eq "$(jq -r --arg i "$id" '[.entries[] | select(.id == $i)] | length' "$f")" 1
+done
+
+# Lock timeout: while another process holds tasks.json.lock, a write must fail fast with a clear
+# non-zero exit and message instead of hanging forever.
+lockfile="$adir/tasks.json.lock"
+mkdir -p "$adir"
+flock -x "$lockfile" -c "sleep 3" &
+holder_pid=$!
+sleep 0.3
+before_timeout=$(jq '.entries | length' "$f")
+set +e
+HERDMASTER_LOCK_TIMEOUT=1 "$B" add task "Should not land" > "$T/timeout.out" 2> "$T/timeout.err"
+timeout_rc=$?
+set -e
+wait "$holder_pid" 2>/dev/null || true
+[[ $timeout_rc -ne 0 ]] || { echo "FAIL: add succeeded despite held lock" >&2; exit 1; }
+grep -qi "lock" "$T/timeout.err" || { echo "FAIL: lock timeout message unclear: $(cat "$T/timeout.err")" >&2; exit 1; }
+eq "$(jq '.entries | length' "$f")" "$before_timeout"
+
 jq '.entries += [range(205) | {id: "T-\(100 + .)", kind: "task", title: "x", status: "done", review: "auto", depends_on: [], attempts: [], created: "2020-01-01T00:00:00Z", updated: "2021-01-01T00:\(10 + (. / 60 | floor)):\(10 + (. % 60))Z"}]' "$f" > "$T/big.json"
 mv "$T/big.json" "$f"
 eq "$("$B" archive)" "archived 7"

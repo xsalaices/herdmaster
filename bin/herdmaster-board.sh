@@ -27,11 +27,14 @@
 #        herdmaster-board.sh count | show
 # A settled decision or an answers.jsonl line NEVER by itself authorizes merge, deploy or push: those
 # still require the master's explicit instruction on the owner's word (see roles/orchestrator.md).
-# Project comes from $HERDMASTER_PROJECT. Single writer (the orchestrator); no lock, so concurrent writers can lose updates.
+# Project comes from $HERDMASTER_PROJECT. Every load-modify-save cycle (any subcommand but show/count)
+# runs under an flock on tasks.json.lock (see with_lock below), so concurrent invocations from different
+# sessions/processes serialize instead of racing on the read-modify-write and corrupting the file.
 set -euo pipefail
 
 die() { echo "herdmaster-board: $*" >&2; exit 2; }
 command -v jq >/dev/null || die "jq is required"
+command -v flock >/dev/null || die "flock is required (e.g. 'brew install flock')"
 [[ -n ${HERDMASTER_PROJECT:-} ]] || die "HERDMASTER_PROJECT is not set"
 case $HERDMASTER_PROJECT in */*|.*) die "invalid HERDMASTER_PROJECT" ;; esac
 
@@ -40,7 +43,19 @@ BOARD="$DIR/tasks.json"
 SHOWN="$DIR/tasks.shown"
 SETTINGS="$DIR/settings.json"
 ARCHIVE="$DIR/tasks-archive.json"
+LOCKFILE="$DIR/tasks.json.lock"
+LOCK_TIMEOUT=${HERDMASTER_LOCK_TIMEOUT:-5}
 KEEP_FINISHED=200
+
+# Wraps a load-modify-save cycle in an exclusive flock on $LOCKFILE so concurrent
+# herdmaster-board invocations serialize instead of racing on the read-modify-write.
+with_lock() {
+  mkdir -p "$DIR"
+  exec 200>"$LOCKFILE"
+  flock -x -w "$LOCK_TIMEOUT" 200 \
+    || die "could not acquire board lock ($LOCKFILE) within ${LOCK_TIMEOUT}s -- another herdmaster-board process may be stuck; check for a stale lock holder"
+  "$@"
+}
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
@@ -548,19 +563,19 @@ cmd_import_legacy() {
 
 sub=${1:-}; shift || true
 case $sub in
-  add) cmd_add "$@" ;;
-  set-options) cmd_set_options "$@" ;;
-  set-review) cmd_set_review "$@" ;;
-  set-group) cmd_set_group "$@" ;;
-  status) cmd_status "$@" ;;
-  settle) cmd_settle "$@" ;;
+  add) with_lock cmd_add "$@" ;;
+  set-options) with_lock cmd_set_options "$@" ;;
+  set-review) with_lock cmd_set_review "$@" ;;
+  set-group) with_lock cmd_set_group "$@" ;;
+  status) with_lock cmd_status "$@" ;;
+  settle) with_lock cmd_settle "$@" ;;
   consume-answers) cmd_consume_answers "$@" ;;
-  attempt) cmd_attempt "$@" ;;
-  supersede) cmd_supersede "$@" ;;
-  release-when-done) cmd_release_when_done "$@" ;;
-  settings) cmd_settings "$@" ;;
-  import-legacy) cmd_import_legacy ;;
-  archive) cmd_archive ;;
+  attempt) with_lock cmd_attempt "$@" ;;
+  supersede) with_lock cmd_supersede "$@" ;;
+  release-when-done) with_lock cmd_release_when_done "$@" ;;
+  settings) if [[ ${1:-} == set ]]; then with_lock cmd_settings "$@"; else cmd_settings "$@"; fi ;;
+  import-legacy) with_lock cmd_import_legacy ;;
+  archive) with_lock cmd_archive ;;
   count) cmd_count ;;
   show) cmd_show ;;
   *) sed -n '2,19p' "$0"; exit 2 ;;

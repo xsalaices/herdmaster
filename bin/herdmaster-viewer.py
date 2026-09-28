@@ -327,7 +327,8 @@ function tickets(ds){
     const key=cur+"\n"+t.name,open=openTk.has(key)?openTk.get(key):t.left>0;
     const d=$("div","tk"+(t.left>0?" open":"")),b=$("button");b.type="button";b.setAttribute("aria-expanded",open);
     const cnt=t.left===0?"Ready to hand off ("+t.qs.length+" of "+t.qs.length+")":(t.qs.length-t.left)+" of "+t.qs.length+" answered";
-    b.append(chev(),$("span","nm",t.name),$("span","cnt",cnt));
+    const m=t.qs[0]&&/^([A-Za-z]+)\d+$/.exec(t.qs[0].id),letter=m?m[1]:"";
+    b.append(chev());if(letter)b.append($("span","tag",letter));b.append($("span","nm",t.name),$("span","cnt",cnt));
     b.onclick=()=>{openTk.set(key,!open);last="";paint()};
     d.append(b);if(open)t.qs.forEach(e=>d.append(question(e)));
     return d;

@@ -12,6 +12,8 @@ Two sessions work as a pair:
 
 Argument: optional project slug. With no argument, use the lowercased basename of `git rev-parse --show-toplevel` (for a worktree, the main checkout's name from `git rev-parse --git-common-dir`). Shared state lives in `~/.claude/orchestrator/<project>/`: `master`, `orchestrator`, `tasks.json` (the board), `status.md`. Create the folder if new.
 
+The user reads every project's board through a background web viewer, `com.herdmaster.viewer` (a launchd job, installed by `scripts/install.sh`), normally reachable at `http://127.0.0.1:8766/` (port from `$HERDMASTER_VIEWER_PORT` if set). It is read-only except for answering its own multiple-choice questions; you never write to it directly. If the user says they can't see something on it, check that the job is running (`launchctl print gui/$(id -u)/com.herdmaster.viewer` on macOS) and that the board content they expect is actually on `tasks.json` before assuming a page bug.
+
 Model names below are variables: `$HERDMASTER_MODEL_DEFAULT` (routine), `$HERDMASTER_MODEL_DEEP` (judgment-heavy), `$HERDMASTER_MODEL_LIGHT` (lookups). Use your own model IDs.
 
 ## On start

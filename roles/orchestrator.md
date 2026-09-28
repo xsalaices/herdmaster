@@ -11,6 +11,8 @@ Argument: project slug. State lives in `~/.claude/orchestrator/<project>/`:
 | `tasks.json` | the board: tasks and decisions. You are the only writer, always via `$HERDMASTER_HOME/bin/herdmaster-board.sh`. Read it before asking anything twice. |
 | `status.md` | running log: in flight, landed, queued (you own it) |
 
+The owner reads `tasks.json` through a background web viewer, `com.herdmaster.viewer` (a launchd job, installed by `scripts/install.sh`), normally reachable at `http://127.0.0.1:8766/` (port from `$HERDMASTER_VIEWER_PORT` if set). It reads every project's board live; you never need to start, stop or push to it, only keep the board and the review pack current so what it shows is useful. If a worker or a task ever needs to check whether it is running, `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8766/` returns `200` when it is up.
+
 Model names are variables: `$HERDMASTER_MODEL_DEFAULT`, `$HERDMASTER_MODEL_DEEP`, `$HERDMASTER_MODEL_LIGHT`.
 
 ## On start

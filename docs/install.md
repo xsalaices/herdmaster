@@ -4,6 +4,7 @@
 
 - macOS with Claude Code, `jq` and `python3`.
 - herdr: install it from its project page, then confirm `herdr status` works.
+- `flock`: the board lock needs it and macOS doesn't ship it; `brew install flock` if `command -v flock` fails.
 
 ## 2. Preview and install
 

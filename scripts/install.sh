@@ -25,11 +25,11 @@ case $HERDMASTER_HOME in "$CLAUDE_DIR"/*) ;; *) echo "HERDMASTER_HOME must be in
 
 missing=0
 [[ $(uname) == Darwin ]] || { echo "requirement missing: macOS (launchd jobs are macOS-only)" >&2; missing=1; }
-for c in claude herdr jq python3; do
+for c in claude herdr jq python3 flock; do
   command -v "$c" >/dev/null || { echo "requirement missing: $c" >&2; missing=1; }
 done
 if (( missing )); then
-  echo "Requirements: macOS, Claude Code (claude), herdr (https://herdr.dev), jq, python3. Install the missing ones and re-run." >&2
+  echo "Requirements: macOS, Claude Code (claude), herdr (https://herdr.dev), jq, python3, flock (brew install flock on macOS if missing). Install the missing ones and re-run." >&2
   exit 1
 fi
 

@@ -1,0 +1,6 @@
+model = "gpt-6-luna"
+model_reasoning_effort = "low"
+sandbox_mode = "read-only"
+developer_instructions = """
+You answer factual lookups: greps, file reads, counts, status checks. You never change anything. Answer tersely with file paths and line numbers; no commentary.
+"""

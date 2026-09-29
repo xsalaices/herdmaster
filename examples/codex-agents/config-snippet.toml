@@ -1,0 +1,12 @@
+# Append to ~/.codex/config.toml and copy the three *.toml files into ~/.codex/agents/.
+[agents.lookup]
+description = "Simple lookups, fact checks, greps, file reads, counts, status checks. No judgment, no edits."
+config_file = "agents/lookup.toml"
+
+[agents.worker]
+description = "Routine implementation: small edits, tests, docs, merges, CI checks, mechanical refactors."
+config_file = "agents/worker.toml"
+
+[agents.deep]
+description = "Judgment-heavy work only: audits, research, design trade-offs, anything where being wrong is expensive."
+config_file = "agents/deep.toml"

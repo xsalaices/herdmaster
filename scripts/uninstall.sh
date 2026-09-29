@@ -46,6 +46,10 @@ fi
 if (( ! KEEP_SKILLS )); then
   for s in herdmaster orchestrator; do
     [[ -f $CLAUDE_DIR/skills/$s/SKILL.md ]] && { run rm -f "$CLAUDE_DIR/skills/$s/SKILL.md"; run rmdir "$CLAUDE_DIR/skills/$s" 2>/dev/null || true; }
+    # Codex copies: removed only when still identical to what install.sh shipped.
+    if cmp -s "$HOME/.agents/skills/$s/SKILL.md" "$(cd "$(dirname "$0")/.." && pwd)/skills-codex/$s/SKILL.md"; then
+      run rm -f "$HOME/.agents/skills/$s/SKILL.md"; run rmdir "$HOME/.agents/skills/$s" 2>/dev/null || true
+    fi
   done
 fi
 
@@ -56,8 +60,9 @@ for a in lookup worker deep; do
   if cmp -s "$dest" "$REPO/agents/$a.md"; then run rm -f "$dest"; else echo "keep agent $a: $dest differs from the shipped copy"; fi
 done
 
-for f in pressure-check.sh pressure-guard.sh cpu-reaper.sh blocked-pane-watcher.sh herdmaster-board.sh herdmaster-layout.sh herdmaster-viewer.py herdmaster-labels.sh herdmaster-agent.sh herdmaster-notify.sh; do
+for f in pressure-check.sh pressure-guard.sh cpu-reaper.sh blocked-pane-watcher.sh herdmaster-board.sh herdmaster-layout.sh herdmaster-viewer.py herdmaster-labels.sh herdmaster-agent.sh herdmaster-notify.sh herdmaster-send.sh; do
   [[ -f $HERDMASTER_HOME/bin/$f ]] && run rm -f "$HERDMASTER_HOME/bin/$f"
 done
 [[ -f $HERDMASTER_HOME/adapters/claude.sh ]] && { run rm -f "$HERDMASTER_HOME/adapters/claude.sh"; run rmdir "$HERDMASTER_HOME/adapters" 2>/dev/null || true; }
+[[ -f $HERDMASTER_HOME/adapters/codex.sh ]] && { run rm -f "$HERDMASTER_HOME/adapters/codex.sh"; run rmdir "$HERDMASTER_HOME/adapters" 2>/dev/null || true; }
 echo "State and logs in $HERDMASTER_HOME are kept; delete that folder by hand if you want them gone."

@@ -43,10 +43,11 @@ run mkdir -p "$HERDMASTER_HOME/bin" "$HERDMASTER_HOME/adapters" "$HERDMASTER_HOM
 for f in "$REPO/hooks/pressure-check.sh" "$REPO/hooks/pressure-guard.sh" \
          "$REPO/launchd/cpu-reaper/cpu-reaper.sh" "$REPO/launchd/blocked-pane-watcher/blocked-pane-watcher.sh" \
          "$REPO/bin/herdmaster-board.sh" "$REPO/bin/herdmaster-layout.sh" "$REPO/bin/herdmaster-viewer.py" "$REPO/bin/herdmaster-labels.sh" \
-         "$REPO/bin/herdmaster-agent.sh" "$REPO/bin/herdmaster-notify.sh"; do
+         "$REPO/bin/herdmaster-agent.sh" "$REPO/bin/herdmaster-notify.sh" "$REPO/bin/herdmaster-send.sh"; do
   run install -m 755 "$f" "$HERDMASTER_HOME/bin/$(basename "$f")"
 done
 run install -m 644 "$REPO/adapters/claude.sh" "$HERDMASTER_HOME/adapters/claude.sh"
+run install -m 644 "$REPO/adapters/codex.sh" "$HERDMASTER_HOME/adapters/codex.sh"
 
 # 2. skills (never overwrite an existing skill unless --force)
 for s in herdmaster orchestrator; do
@@ -58,6 +59,19 @@ for s in herdmaster orchestrator; do
   run mkdir -p "$dest"
   run install -m 644 "$REPO/skills/$s/SKILL.md" "$dest/SKILL.md"
 done
+
+# 2b. Codex skills, only when the codex CLI is installed (same no-overwrite rule)
+if command -v codex >/dev/null; then
+  for s in herdmaster orchestrator; do
+    dest="$HOME/.agents/skills/$s"
+    if [[ -e $dest && $FORCE -eq 0 ]]; then
+      say "skip codex skill $s: $dest exists (use --force to replace)"
+      continue
+    fi
+    run mkdir -p "$dest"
+    run install -m 644 "$REPO/skills-codex/$s/SKILL.md" "$dest/SKILL.md"
+  done
+fi
 
 # 3. model-routing subagents (never overwrite an existing agent unless --force)
 run mkdir -p "$CLAUDE_DIR/agents"

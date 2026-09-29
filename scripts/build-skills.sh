@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
-# Generates the Claude skills and the worker brief template from roles/*.md and roles/transport-claude.md.
-# Usage: scripts/build-skills.sh [--out DIR]   writes under DIR (default: this repo)
+# Generates the skills and the worker brief template from roles/*.md and roles/transport-<name>.md.
+# Usage: scripts/build-skills.sh [--out DIR] [--transport claude|codex]   writes under DIR (default: this repo)
+# claude -> skills/, examples/worker-brief-template.md; codex -> skills-codex/, examples/worker-brief-template.codex.md
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 OUT=$REPO
-if [[ ${1:-} == --out ]]; then OUT=${2:?--out needs a directory}; fi
+TRANSPORT=claude
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --out) OUT=${2:?--out needs a directory}; shift 2 ;;
+    --transport) TRANSPORT=${2:?--transport needs a name}; shift 2 ;;
+    *) echo "build-skills: unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+[[ -f $REPO/roles/transport-$TRANSPORT.md ]] || { echo "build-skills: no roles/transport-$TRANSPORT.md" >&2; exit 2; }
 
 # Values are the lines between ~~~ fences under a "## key" heading; they are inserted verbatim, never rescanned.
 build() {
@@ -27,11 +36,17 @@ build() {
         line = substr(line, i + j + 3)
       }
       print out line
-    }' "$REPO/roles/transport-claude.md" "$REPO/roles/$role.md")
+    }' "$REPO/roles/transport-$TRANSPORT.md" "$REPO/roles/$role.md")
   mkdir -p "$(dirname "$dest")"
   printf '%s\n' "$text" > "$dest"
 }
 
-build planner skills/herdmaster/SKILL.md
-build orchestrator skills/orchestrator/SKILL.md
-build worker examples/worker-brief-template.md
+if [[ $TRANSPORT == claude ]]; then
+  build planner skills/herdmaster/SKILL.md
+  build orchestrator skills/orchestrator/SKILL.md
+  build worker examples/worker-brief-template.md
+else
+  build planner "skills-$TRANSPORT/herdmaster/SKILL.md"
+  build orchestrator "skills-$TRANSPORT/orchestrator/SKILL.md"
+  build worker "examples/worker-brief-template.$TRANSPORT.md"
+fi

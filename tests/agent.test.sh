@@ -98,4 +98,15 @@ eq "$(run_line new-worker build --tier default --resume sess-1 "$brief")" \
 eq "$(run_line new-orchestrator --tier default '/orchestrator demo')" \
    "$(run_line new-orchestrator env -u ANTHROPIC_API_KEY claude --disallowedTools AskUserQuestion --model model-d --dangerously-skip-permissions '/orchestrator demo')"
 "$L" --dry-run new-worker build --tier huge x >/dev/null 2>&1 && fail "layout accepted a bad tier"
+# Codex adapter: selected per role by settings, own env strips, own model tiers, resume shape.
+export HERDMASTER_PROJECT=demo
+"$R/bin/herdmaster-board.sh" settings set agent_worker codex >/dev/null
+eq "$("$A" command worker default 'do it')" \
+   "env -u OPENAI_API_KEY -u CODEX_API_KEY codex --yolo --dangerously-bypass-hook-trust -c forced_login_method=chatgpt -m model-d do\\ it "
+eq "$("$A" command worker default --resume sess-9)" \
+   "env -u OPENAI_API_KEY -u CODEX_API_KEY codex resume sess-9 --yolo --dangerously-bypass-hook-trust -c forced_login_method=chatgpt -m model-d "
+eq "$(HERDMASTER_MODEL_LIGHT= "$A" model worker light)" "gpt-6-luna"
+eq "$("$A" guard worker)" hook
+eq "$("$A" command planner default x)" "$(printf '%q ' env -u ANTHROPIC_API_KEY claude --disallowedTools AskUserQuestion --model model-d --dangerously-skip-permissions x)"
+unset HERDMASTER_PROJECT
 echo ok

@@ -1,0 +1,20 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "$HOME/.claude/herdmaster/bin/pressure-guard.sh" }]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [{ "type": "command", "command": "[ -n \"$HERDR_PANE_ID\" ] && herdr pane report-agent \"$HERDR_PANE_ID\" --source custom:herdmaster-codex --agent codex --state working >/dev/null 2>&1; exit 0" }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": "[ -n \"$HERDR_PANE_ID\" ] && herdr pane report-agent \"$HERDR_PANE_ID\" --source custom:herdmaster-codex --agent codex --state idle >/dev/null 2>&1; exit 0" }]
+      }
+    ]
+  }
+}

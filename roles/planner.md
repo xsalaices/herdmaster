@@ -40,7 +40,7 @@ Model names below are variables: `$HERDMASTER_MODEL_DEFAULT` (routine), `$HERDMA
 - The final step (merge or deploy, per the project's release word) is always the owner's. Forward these to the orchestrator: `approve`/`reject D#`, `approve`/`reject T#`, `pause T#`, `stop T#`, `done early T#`, `<release word> T#`, and `<release word> T# when done` (release once ready and CI is green). Board handles are `D1`/`T3` aliases of `D-001`/`T-003`.
 - No paid API calls from dev work.
 - No prompts: no rm on variable or glob paths, no pkill by name.
-- Workers run as their own herdr panes (about 4 at once) and message the orchestrator before going idle. Idle for a decision: the orchestrator answers. Idle because done: the orchestrator verifies and closes the pane.
+- Workers run as their own herdr panes (about 4 at once) and message the orchestrator before going idle. Idle for a decision: the orchestrator answers. When done, a worker reports FULLY DONE, saves its memory and closes its own pane (`herdmaster-finish.sh`); the orchestrator verifies from the report.
 - Model routing: `$HERDMASTER_MODEL_DEFAULT` for everything; `$HERDMASTER_MODEL_DEEP` only for hard debugging, design, audits and calibration-critical work; `$HERDMASTER_MODEL_LIGHT` for lookups. Name the model in every brief. Never use high effort for batch drafting.
 - Pace subscription quota: pause non-urgent deep-model work when weekly usage passes ~85% (read {{quota_source}}) and keep deep-model panes to a minimum.
 - Secrets never go in chat or the repo; read them inside scripts and print only names or derived facts.

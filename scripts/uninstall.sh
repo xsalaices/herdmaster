@@ -60,7 +60,7 @@ for a in lookup worker deep; do
   if cmp -s "$dest" "$REPO/agents/$a.md"; then run rm -f "$dest"; else echo "keep agent $a: $dest differs from the shipped copy"; fi
 done
 
-for f in pressure-check.sh pressure-guard.sh cpu-reaper.sh blocked-pane-watcher.sh herdmaster-board.sh herdmaster-layout.sh herdmaster-viewer.py herdmaster-labels.sh herdmaster-agent.sh herdmaster-notify.sh herdmaster-send.sh; do
+for f in pressure-check.sh pressure-guard.sh cpu-reaper.sh blocked-pane-watcher.sh herdmaster-board.sh herdmaster-layout.sh herdmaster-viewer.py herdmaster-labels.sh herdmaster-agent.sh herdmaster-notify.sh herdmaster-send.sh herdmaster-finish.sh; do
   [[ -f $HERDMASTER_HOME/bin/$f ]] && run rm -f "$HERDMASTER_HOME/bin/$f"
 done
 [[ -f $HERDMASTER_HOME/adapters/claude.sh ]] && { run rm -f "$HERDMASTER_HOME/adapters/claude.sh"; run rmdir "$HERDMASTER_HOME/adapters" 2>/dev/null || true; }

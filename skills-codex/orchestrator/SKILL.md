@@ -32,14 +32,14 @@ Model names are variables: `$HERDMASTER_MODEL_DEFAULT`, `$HERDMASTER_MODEL_DEEP`
 **Just do it (never escalate):**
 - a pane asking "proceed as described?" for work already requested: `herdr pane send-keys <pane> enter`
 - a green `review:auto` PR: leave it ready for the owner's final step (see Final step), unless `release_when_done` is set on its task
-- a pane that reports FULLY DONE: verify its output, update the board, close its pane (the final step stays manual, see Final step)
+- a worker that reports FULLY DONE: it has already closed its own pane (`herdmaster-finish.sh`), so verify its output from the report, its branch and the tests, update the board, and if something is wrong relaunch the task with `codex resume <session-id>` and a correction (the final step stays manual, see Final step)
 - an obvious next step in an agreed plan: start it
 - transient failures (dropped connection, stalled pane): resume with `codex resume <session-id>`
 - CI-only, test-only, docs or mechanical fixes
 
 **Signal routing:** work signals are yours. Escalate to the master only for: a decision the user must make, a surprising result, a real breakthrough, or deploy-ready; batch the rest into check-in summaries. Outside signals (email, people, money, security) belong to the master alone.
 
-**Idle rule:** every worker messages you before going idle. Idle for a decision: you answer (escalate only true taste calls). Idle because done: verify, close. A pane idle with no report: `herdr pane read <pane>` and act. Close dead shell panes right away. Never leave a pane idle waiting on another pane; give it independent prep work or close it and `codex resume` later.
+**Idle rule:** every worker messages you before going idle. Idle for a decision: you answer (escalate only true taste calls). Done: the worker reports FULLY DONE and closes its own pane; you verify from the report, not from a live pane. A pane idle with no report: `herdr pane read <pane>` and act. Close dead shell panes right away. Never leave a pane idle waiting on another pane; give it independent prep work or close it and `codex resume` later.
 
 **Open-PR sweep:** before closing any pane, and hourly, check `gh pr list --state open` and note any green PR a finished worker left behind; it waits for the owner's final step.
 
@@ -103,7 +103,7 @@ When the final step is a merge (the `<word> T# when done` exception, or the owne
 - Keep `~/.claude/orchestrator/<project>/orchestrator` current, and tell live panes your new name after any change.
 - Release only on the owner's word forwarded by the master.
 - No paid API calls from the fleet, any vendor, unless the master approves first.
-- Every brief follows `examples/worker-brief-template.md`: fleet rules, "report to <your session name>, say FULLY DONE, stop", and the no-interactive-prompt line.
+- Every brief follows `examples/worker-brief-template.md`: fleet rules, the worker's `herdmaster-finish.sh` closing step (report, memory, exit), and the no-interactive-prompt line.
 - Layout: by default, tab 1 holds the master (left) and a read-only board sidebar (right, `herdmaster-sidebar.sh`, a plain pane -- not you); you live in the workers tab grid like any other pane, just labeled `orchestrator` instead of a task title. (`new-orchestrator --classic` restores the old layout: you on tab 1's right half, no sidebar pane.) Workers go in the workers tab grid alongside you. `HERDMASTER_GRID_PANES` (default 6) sets panes per grid, `HERDMASTER_WORKER_LAYOUT=main` keeps workers on the main tab up to `HERDMASTER_MAX_PANES` (default 4). No manual rebalancing.
 - If panes were opened by hand on tab 1 before you and the master existed, `herdmaster-layout.sh adopt --master <pane-id> --orchestrator <pane-id>` re-homes them into the workers grid in one pass. This is a one-time cleanup tool the owner runs, not something to invoke automatically on start.
 - Watch quota: read weekly usage from the Codex footer or `/status`. Past ~85%, pause non-urgent `$HERDMASTER_MODEL_DEEP` work, keep deep-model panes to a minimum, and never use high effort for batch drafting. Delegate small jobs to the `lookup`, `worker` and `deep` subagents (Codex agent roles pinned to `gpt-6-luna`, `gpt-6.1-sol` and `gpt-6-astra`): ask Codex to spawn the named subagent. Width is set in the brief.

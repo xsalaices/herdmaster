@@ -43,7 +43,7 @@ run mkdir -p "$HERDMASTER_HOME/bin" "$HERDMASTER_HOME/adapters" "$HERDMASTER_HOM
 for f in "$REPO/hooks/pressure-check.sh" "$REPO/hooks/pressure-guard.sh" \
          "$REPO/launchd/cpu-reaper/cpu-reaper.sh" "$REPO/launchd/blocked-pane-watcher/blocked-pane-watcher.sh" \
          "$REPO/bin/herdmaster-board.sh" "$REPO/bin/herdmaster-layout.sh" "$REPO/bin/herdmaster-viewer.py" "$REPO/bin/herdmaster-labels.sh" \
-         "$REPO/bin/herdmaster-agent.sh" "$REPO/bin/herdmaster-notify.sh" "$REPO/bin/herdmaster-send.sh"; do
+         "$REPO/bin/herdmaster-agent.sh" "$REPO/bin/herdmaster-notify.sh" "$REPO/bin/herdmaster-send.sh" "$REPO/bin/herdmaster-finish.sh"; do
   run install -m 755 "$f" "$HERDMASTER_HOME/bin/$(basename "$f")"
 done
 run install -m 644 "$REPO/adapters/claude.sh" "$HERDMASTER_HOME/adapters/claude.sh"

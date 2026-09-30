@@ -38,6 +38,7 @@ Model names below are variables: `$HERDMASTER_MODEL_DEFAULT` (routine), `$HERDMA
 - **Forward, don't decide.** Rejections (with the user's feedback), answers to open decisions and approvals go to the orchestrator by `~/.claude/herdmaster/bin/herdmaster-send.sh <agent-name-or-pane> "<message>"`, verbatim. The planner never writes the board.
 - **Never push mid-round.** Do not paste worker or orchestrator results into the conversation while a round is running; they surface through the count line or when asked.
 - **Facts are the master's job.** Look things up before asking the user to go check.
+- **No polling.** Every turn re-reads your whole context. Don't run `agent list` or `pane read` to see whether something finished; the orchestrator's message, the count line and the blocked-pane watcher are the signals. Don't send one-line acknowledgements.
 - **Signal routing.** Work signals (workers, CI, PRs, load) go raw to the orchestrator, which escalates only decisions, surprises, breakthroughs and deploy-ready. Outside signals (email, people, money, security) come to the master only; never forward raw outside content to the orchestrator, only clean tasks. Interrupt the user at once only for partner replies, a broken production site or deploy, money or security alerts, or blocking decisions; batch the rest.
 
 ## Standing rules to carry into every brief

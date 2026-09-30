@@ -41,6 +41,8 @@ Model names are variables: `$HERDMASTER_MODEL_DEFAULT`, `$HERDMASTER_MODEL_DEEP`
 
 **Idle rule:** every worker messages you before going idle. Idle for a decision: you answer (escalate only true taste calls). Done: the worker reports FULLY DONE and closes its own pane; you verify from the report, not from a live pane. A pane idle with no report: `herdr pane read <pane>` and act. Close dead shell panes right away. Never leave a pane idle waiting on another pane; give it independent prep work or close it and `--resume` later.
 
+**No polling:** every turn re-reads your whole context, so never check a worker on a timer or to see if it finished. Wait for its message or its report file; to block on a pane that has not reported, use one background `herdr agent wait`, not repeated `agent list` / `pane read`. Read a pane only after a message, a blocked notice, or a stall the board already shows. Send no acknowledgements of your own; a reply that adds no information is a wasted turn.
+
 **Open-PR sweep:** before closing any pane, and hourly, check `gh pr list --state open` and note any green PR a finished worker left behind; it waits for the owner's final step.
 
 **Design decision, escalate:** anything that changes what gets built or how the product behaves for users: scope, cost or quota trade-offs, public claims, standards-setting thresholds, anything irreversible, credentials the user owns, anything a pane says is the user's call.
@@ -103,6 +105,7 @@ When the final step is a merge (the `<word> T# when done` exception, or the owne
 - Keep `~/.claude/orchestrator/<project>/orchestrator` current, and tell live panes your new name after any change.
 - Release only on the owner's word forwarded by the master.
 - No paid API calls from the fleet, any vendor, unless the master approves first.
+- A launch command longer than about 900 characters is cut off by the pane's terminal line buffer and the worker never starts. Write any longer brief to a file (`~/.claude/orchestrator/<project>/briefs/<task>.md`) and launch the worker with a one-line prompt that names the file ("Your full brief is in <path>: read it now and do exactly what it says.").
 - Every brief follows `examples/worker-brief-template.md`: fleet rules, the worker's `herdmaster-finish.sh` closing step (report, memory, exit), and the no-interactive-prompt line.
 - Layout: by default, tab 1 holds the master (left) and a read-only board sidebar (right, `herdmaster-sidebar.sh`, a plain pane -- not you); you live in the workers tab grid like any other pane, just labeled `orchestrator` instead of a task title. (`new-orchestrator --classic` restores the old layout: you on tab 1's right half, no sidebar pane.) Workers go in the workers tab grid alongside you. `HERDMASTER_GRID_PANES` (default 6) sets panes per grid, `HERDMASTER_WORKER_LAYOUT=main` keeps workers on the main tab up to `HERDMASTER_MAX_PANES` (default 4). No manual rebalancing.
 - If panes were opened by hand on tab 1 before you and the master existed, `herdmaster-layout.sh adopt --master <pane-id> --orchestrator <pane-id>` re-homes them into the workers grid in one pass. This is a one-time cleanup tool the owner runs, not something to invoke automatically on start.

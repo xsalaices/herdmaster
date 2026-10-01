@@ -1,3 +1,5 @@
+![herdmaster](social-preview.png)
+
 # herdmaster
 
 A planner + orchestrator setup for Claude Code.

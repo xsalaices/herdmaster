@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
 # Places worker panes and keeps the grid even.
 # Usage: herdmaster-layout.sh [--dry-run] new-worker <label> [--cwd <dir>] <launch>   prints the new pane id
-#        herdmaster-layout.sh [--dry-run] new-orchestrator [--classic] [--cwd <dir>] <launch>
-#                                                                      default: puts herdmaster-sidebar.sh in tab 1's right half and
-#                                                                      places the orchestrator in the workers tab (same grid logic as
-#                                                                      new-worker), labeled orchestrator. --classic restores the old
-#                                                                      behavior: orchestrator in tab 1's right half, no sidebar pane.
-#                                                                      Records the herdr workspace in settings, prints the orchestrator pane id.
+#        herdmaster-layout.sh [--dry-run] new-orchestrator [--cwd <dir>] <launch>    splits the current pane right, labels it orchestrator, records the herdr workspace in settings, prints the new pane id
 #        herdmaster-layout.sh [--dry-run] rebalance [pane]             equal widths for the tab of pane (default: current)
 #        herdmaster-layout.sh [--dry-run] adopt [--workspace <id>] --master <pane-id> --orchestrator <pane-id>
 #                                                                      moves every other pane on that workspace's tab 1 into the worker layout
@@ -132,38 +127,17 @@ cmd_new_worker() {
   place_worker_pane "$label" "$cmd"
 }
 
-# Plain (no-agent) pane running herdmaster-sidebar.sh, split into tab 1's right half -- the slot the
-# orchestrator itself used to take. Its command carries no HERDMASTER_ROLE/HERDMASTER_MASTER, unlike
-# every agent launch, so it reads as a plain script run rather than a fleet pane.
-place_sidebar_pane() {
-  local pane cmd
-  cmd="HERDMASTER_PROJECT=$(printf '%q' "${HERDMASTER_PROJECT:-}") $(dirname "$0")/herdmaster-sidebar.sh"
-  pane=$(mut_json .result.pane.pane_id "<new-pane>" pane split --current --direction right --no-focus)
-  mut pane rename "$pane" sidebar >&2
-  mut pane run "$pane" "$cmd" >&2
-}
-
 cmd_new_orchestrator() {
-  local classic=0 cwd=""
-  while [[ ${1:-} == --classic || ${1:-} == --cwd ]]; do
-    case $1 in
-      --classic) classic=1; shift ;;
-      --cwd) cwd=${2:-}; [[ -n $cwd ]] || die "new-orchestrator: --cwd requires a directory"; shift 2 ;;
-    esac
-  done
+  local cwd=""
+  [[ ${1:-} == --cwd ]] && { cwd=${2:-}; [[ -n $cwd ]] || die "new-orchestrator: --cwd requires a directory"; shift 2; }
   [[ $# -gt 0 ]] || die "new-orchestrator: <launch> required"
   local pane master cmd; master=$(master_name)
   cmd=$(launch_cmd orchestrator "$@")
   cmd="HERDMASTER_ROLE=orchestrator HERDMASTER_MASTER=$(printf '%q' "$master") $cmd"
   [[ -n $cwd ]] && cmd="cd $(printf '%q' "$cwd") && $cmd"
-  if (( classic )); then
-    pane=$(mut_json .result.pane.pane_id "<new-pane>" pane split --current --direction right --no-focus)
-    mut pane rename "$pane" orchestrator >&2
-    mut pane run "$pane" "$cmd" >&2
-  else
-    place_sidebar_pane
-    pane=$(place_worker_pane orchestrator "$cmd")
-  fi
+  pane=$(mut_json .result.pane.pane_id "<new-pane>" pane split --current --direction right --no-focus)
+  mut pane rename "$pane" orchestrator >&2
+  mut pane run "$pane" "$cmd" >&2
   record_workspace >&2
   echo "$pane"
 }

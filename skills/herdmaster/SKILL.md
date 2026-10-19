@@ -14,7 +14,7 @@ Argument: optional project slug. With no argument, use the lowercased basename o
 
 The user reads every project's board through a background web viewer, `com.herdmaster.viewer` (a launchd job, installed by `scripts/install.sh`), normally reachable at `http://127.0.0.1:8766/` (port from `$HERDMASTER_VIEWER_PORT` if set). It is read-only except for answering its own multiple-choice questions; you never write to it directly. If the user says they can't see something on it, check that the job is running (`launchctl print gui/$(id -u)/com.herdmaster.viewer` on macOS) and that the board content they expect is actually on `tasks.json` before assuming a page bug.
 
-Model names below are variables: `$HERDMASTER_MODEL_DEFAULT` (routine), `$HERDMASTER_MODEL_DEEP` (judgment-heavy), `$HERDMASTER_MODEL_LIGHT` (lookups). Use your own model IDs.
+Model names below are variables: `$HERDMASTER_MODEL_DEFAULT` (routine), `$HERDMASTER_MODEL_DEEP` (judgment-heavy), `$HERDMASTER_MODEL_LIGHT` (lookups). The orchestrator window itself runs `$HERDMASTER_MODEL_ORCHESTRATOR` at `$HERDMASTER_EFFORT_ORCHESTRATOR`, and this planner window `$HERDMASTER_MODEL_MASTER` at `$HERDMASTER_EFFORT_MASTER`; set them in settings.json `env` so restarts keep them. Use your own model IDs.
 
 ## On start
 
@@ -22,7 +22,7 @@ Model names below are variables: `$HERDMASTER_MODEL_DEFAULT` (routine), `$HERDMA
 
 1. Write this session's name (from `ListAgents`) to `~/.claude/orchestrator/<project>/master`, and rename this pane: `herdr pane rename "$(herdr pane current | jq -r .result.pane.pane_id)" herdmaster`. Also map this pane's workspace to the project so the board viewer follows it: `HERDMASTER_PROJECT=<project> $HERDMASTER_HOME/bin/herdmaster-board.sh settings set herdr_workspace "$(herdr pane current | jq -r .result.pane.workspace_id)"`.
 2. Read `~/.claude/orchestrator/<project>/orchestrator` for the orchestrator's name and check it is live in `ListAgents`. If not, launch one in a new pane on the right half of tab 1, labeled `orchestrator` (sets `HERDMASTER_ROLE=orchestrator` and `HERDMASTER_MASTER` from the master file):
-   `$HERDMASTER_HOME/bin/herdmaster-layout.sh new-orchestrator env -u ANTHROPIC_API_KEY claude --disallowedTools AskUserQuestion --model "$HERDMASTER_MODEL_DEFAULT" --dangerously-skip-permissions '/orchestrator <project>'`
+   `$HERDMASTER_HOME/bin/herdmaster-layout.sh new-orchestrator env -u ANTHROPIC_API_KEY claude --disallowedTools AskUserQuestion --model "${HERDMASTER_MODEL_ORCHESTRATOR:-$HERDMASTER_MODEL_DEFAULT}" --effort "${HERDMASTER_EFFORT_ORCHESTRATOR:-medium}" --dangerously-skip-permissions '/orchestrator <project>'`
    Then re-read the name file.
 3. Read the project CLAUDE.md and `status.md`, run `$HERDMASTER_HOME/bin/herdmaster-board.sh count`, then give the user a short status: live, in flight, waiting on them, waiting on others.
 4. Optionally arm a blocked-pane check in the background:

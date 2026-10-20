@@ -2,6 +2,7 @@
 # SendMessage for agents that lack one (Codex etc.): types a labeled message into another herdr pane.
 # Usage: herdmaster-send.sh <target pane-id or agent name> <message...>     ("-" as message reads stdin)
 # The message is prefixed "[herdmaster msg from <agent> <pane>]" so the receiver can tell it is not the owner.
+# A name that is not a live agent target is resolved to the pane whose terminal title equals it.
 # With HERDMASTER_PROJECT set, a copy is appended to ~/.claude/orchestrator/<project>/messages.jsonl (durable, since
 # herdr prompts can be dropped). Never waits: herdr's --wait is unreliable for some agents (see docs/design/providers.md).
 set -euo pipefail
@@ -16,6 +17,13 @@ TARGET=$1; shift
 if [[ $* == "-" ]]; then MSG=$(cat); else MSG=$*; fi
 [[ -n ${MSG//[[:space:]]/} ]] || die "empty message"
 (( ${#MSG} <= 4000 )) || die "message over 4000 chars; write it to a file and send the path"
+
+# herdr only addresses panes by id; a session name (e.g. one restored by claude-restart.py) is the pane's terminal title.
+if ! "$HERDR" agent get "$TARGET" >/dev/null 2>&1; then
+  ids=$("$HERDR" agent list 2>/dev/null | jq -r --arg n "$TARGET" '.result.agents[]? | select(.terminal_title_stripped == $n) | .pane_id' 2>/dev/null) || ids=""
+  [[ $(grep -c . <<<"$ids") -le 1 ]] || die "name '$TARGET' matches several panes: $(tr '\n' ' ' <<<"$ids")"
+  [[ -z $ids ]] || TARGET=$ids
+fi
 
 # Own identity: agent kind and pane id from herdr, else just the pane id from the environment.
 KIND=agent PANE=${HERDR_PANE_ID:-unknown}

@@ -1,18 +1,25 @@
 #!/usr/bin/env bash
 # PreToolUse(Bash) hook. While pressure.json says high/critical (and is fresh), deny heavy
 # commands with a "wait 2-5 minutes and retry" message. Fails open when the state is ok,
-# missing or stale. Emergency override: HERDMASTER_IGNORE_PRESSURE=1 (use sparingly).
+# missing or stale; fails CLOSED (exit 2) when the hook input is unparseable or the script
+# errors (settings.json also sets onFailure "block"). Emergency override: HERDMASTER_IGNORE_PRESSURE=1.
 HERDMASTER_HOME="${HERDMASTER_HOME:-$HOME/.claude/herdmaster}"
 STATE="$HERDMASTER_HOME/state/pressure.json"
-[[ -n ${HERDMASTER_IGNORE_PRESSURE:-} || ! -f $STATE ]] && exit 0
+[[ -n ${HERDMASTER_IGNORE_PRESSURE:-} ]] && exit 0
 input=$(cat)
 python3 - "$STATE" "$input" <<'PY'
 import json, os, re, sys, time
 try:
+    cmd = json.loads(sys.argv[2])["tool_input"]["command"]
+    if not isinstance(cmd, str):
+        raise TypeError("command is not a string")
+except Exception as e:
+    print(f"pressure-guard: unparseable hook input ({e}); blocking (fail closed).", file=sys.stderr)
+    sys.exit(2)
+try:
     st = json.load(open(sys.argv[1]))
-    cmd = json.loads(sys.argv[2]).get("tool_input", {}).get("command", "")
 except Exception:
-    sys.exit(0)
+    sys.exit(0)  # no or half-written state file is normal, not an error
 if st.get("level") not in ("high", "critical") or time.time() - st.get("ts", 0) > 180:
     sys.exit(0)
 default = (r"(\bnpm\s+run\s+(dev|test|build|e2e)|\bnpx\s+(vite|vitest|playwright)|\bvitest\b|\bplaywright\b"

@@ -12,6 +12,8 @@ cat > "$T/herdr" <<STUB
 #!/usr/bin/env bash
 case "\$1 \$2" in
   "pane current") echo '{"agent":"codex","pane_id":"w9:p3"}' ;;
+  "agent get") [[ \$3 == w19:p1 ]] ;;
+  "agent list") echo '{"result":{"agents":[{"pane_id":"w2:p5","terminal_title_stripped":"proj-orch-ec"},{"pane_id":"w2:p6","terminal_title_stripped":"dup"},{"pane_id":"w2:p7","terminal_title_stripped":"dup"}]}}' ;;
   "agent prompt") printf '%s\n%s\n' "\$3" "\$4" > "$T/got" ;;
   *) exit 1 ;;
 esac
@@ -35,4 +37,8 @@ HERDMASTER_PROJECT=demo "$S" w19:p1 'quote "q" and $x' >/dev/null
 "$S" w19:p1 "   " 2>/dev/null && fail "empty message accepted"
 "$S" w19:p1 2>/dev/null && fail "missing message accepted"
 "$S" w19:p1 "$(head -c 4001 /dev/zero | tr '\0' a)" 2>/dev/null && fail "oversize accepted"
+# A session name resolves to the pane whose terminal title matches; ambiguous names are refused.
+"$S" proj-orch-ec "by name" >/dev/null
+[[ $(sed -n 1p "$T/got") == w2:p5 ]] || fail "name not resolved to pane: $(sed -n 1p "$T/got")"
+"$S" dup "x" 2>/dev/null && fail "ambiguous name accepted"
 echo ok

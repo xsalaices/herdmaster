@@ -68,6 +68,10 @@ Delegate small jobs to the `lookup`, `worker` and `deep` subagents (Codex agent 
 headless `codex exec`
 ~~~
 
+## headless_batch
+~~~
+~~~
+
 ## orchestrator_role
 ~~~
 the `orchestrator` skill

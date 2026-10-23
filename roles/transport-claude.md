@@ -68,6 +68,11 @@ Delegate small jobs to the `lookup`, `worker` and `deep` subagents in `~/.claude
 headless `claude -p`
 ~~~
 
+## headless_batch
+~~~
+ Batch `claude -p` calls run without MCP servers, or each call starts its own (about 180 MB each): `claude -p "<prompt>" --model <id> --strict-mcp-config --mcp-config '{"mcpServers":{}}' --allowedTools ""`, with the prompt first, because the tool flags take several values and swallow a trailing prompt.
+~~~
+
 ## orchestrator_role
 ~~~
 the `orchestrator` skill

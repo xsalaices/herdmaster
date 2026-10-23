@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Orchestrator: a pane-or-subagent rule for routing each task, and (Claude) batch `claude -p` calls run without MCP servers.
 - `herdmaster-send.sh`: a target that isn't a live pane id is resolved to the pane whose terminal title matches it, so a window keeps its address after a restart gives it a new pane id; an ambiguous name is refused.
 - Providers, phase 1: launch commands come from an agent adapter (`adapters/claude.sh`, `bin/herdmaster-agent.sh`, `herdmaster-layout.sh ... --tier`), picked by the new `agent` and `agent_<role>` settings. The skills and worker brief template are generated from `roles/` by `scripts/build-skills.sh`. No change for Claude.
 - Skills: the final step (merge or deploy) is always manual; `<word> T# when done` releases one task, and the planner forwards approve, reject, pause, stop and done early commands.
